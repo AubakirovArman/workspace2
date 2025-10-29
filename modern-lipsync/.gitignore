@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# PyTorch
+*.pth
+*.pt
+!checkpoints/*.pth
+!checkpoints/*.pt
+
+# Results
+results/*.mp4
+results/*.avi
+temp/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+*.mp4
+*.avi
+*.wav
+*.mp3
+!examples/*.mp4
+!examples/*.wav

@@ -1,0 +1,28 @@
+# Modern Lipsync - Updated Dependencies for 2025
+# PyTorch ecosystem - уже установлено
+torch>=2.8.0
+torchvision>=0.23.0
+torchaudio>=2.8.0
+
+# Audio processing
+librosa>=0.10.0
+soundfile>=0.12.0
+resampy>=0.4.0
+
+# Computer Vision
+opencv-python>=4.10.0
+opencv-contrib-python>=4.10.0
+pillow>=11.0.0
+
+# Scientific computing
+numpy>=2.1.0
+scipy>=1.14.0
+
+# Deep Learning utilities
+tqdm>=4.67.0
+
+# Face detection
+facenet-pytorch>=2.5.0
+
+# Utils
+pyyaml>=6.0.0

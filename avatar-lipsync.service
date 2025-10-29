@@ -1,0 +1,21 @@
+[Unit]
+Description=Avatar Lipsync Web Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/workspace
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/python3 /workspace/app.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Ограничения ресурсов (опционально)
+# MemoryLimit=8G
+# CPUQuota=400%
+
+[Install]
+WantedBy=multi-user.target

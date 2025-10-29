@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Реалтайм озвучка 🎙️</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 0;
+        }
+
+        .navbar {
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 15px 0;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+        }
+
+        .nav-brand {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .nav-menu {
+            display: flex;
+            gap: 20px;
+            list-style: none;
+        }
+
+        .nav-link {
+            text-decoration: none;
+            color: #555;
+            padding: 8px 16px;
+            border-radius: 5px;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .nav-link:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .nav-link.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .page-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: calc(100vh - 70px);
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 900px;
+            width: 100%;
+            padding: 40px;
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        .avatar-section {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .avatar-container {
+            display: inline-block;
+            position: relative;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .avatar-image {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .video-result {
+            display: none;
+            width: 100%;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .video-result.active {
+            display: block;
+        }
+
+        .canvas-container {
+            display: none;
+            position: relative;
+        }
+
+        .canvas-container.active {
+            display: block;
+        }
+
+        #avatarCanvas {
+            width: 100%;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .input-section {
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 600;
+            font-size: 1em;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1em;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 120px;
+            transition: border-color 0.3s;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .language-selector {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .language-option {
+            flex: 1;
+            min-width: 100px;
+        }
+
+        .language-option input[type="radio"] {
+            display: none;
+        }
+
+        .language-option label {
+            display: block;
+            padding: 12px 20px;
+            background: #f5f5f5;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .language-option input[type="radio"]:checked + label {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .language-option label:hover {
+            border-color: #667eea;
+        }
+
+        .generate-button {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.2em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .generate-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .generate-button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .generate-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: 600;
+            display: none;
+        }
+
+        .status.active {
+            display: block;
+        }
+
+        .status.loading {
+            background: #fff3cd;
+            color: #856404;
+            border: 2px solid #ffeaa7;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 2px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 2px solid #f5c6cb;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0, 0, 0, 0.1);
+            border-top-color: #856404;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .info-box {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            border-radius: 5px;
+            color: #1565c0;
+        }
+
+        .info-box strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 25px;
+            }
+
+            h1 {
+                font-size: 2em;
+            }
+
+            .language-option {
+                min-width: 80px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Навигационное меню -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">🎭 Говорящий Аватар</div>
+            <ul class="nav-menu">
+                <li><a href="/" class="nav-link">📥 Создать и скачать</a></li>
+                <li><a href="/realtime" class="nav-link active">🎙️ Реалтайм (без зубов)</a></li>
+                <li><a href="/realtime2" class="nav-link">🦷 Реалтайм 2 (с зубами)</a></li>
+                <li><a href="/realtime3" class="nav-link">🎛️ Настройки</a></li>
+                <li><a href="/api-test" class="nav-link">🔌 API Test</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Основной контент -->
+    <div class="page-wrapper">
+    <div class="container">
+        <h1>🎙️ Реалтайм озвучка</h1>
+        <p class="subtitle">Мгновенная озвучка с анимацией губ в реальном времени</p>
+
+        <div class="avatar-section">
+            <div class="avatar-container">
+                <img id="avatarImage" class="avatar-image" src="/api/avatar" alt="Аватар">
+                <video id="videoPlayer" class="video-result" autoplay></video>
+            </div>
+        </div>
+
+        <div class="input-section">
+            <div class="input-group">
+                <label for="textInput">✍️ Текст для озвучки:</label>
+                <textarea 
+                    id="textInput" 
+                    placeholder="Введите текст для мгновенной озвучки..."
+                    maxlength="500"
+                ></textarea>
+            </div>
+
+            <div class="input-group">
+                <label>🌍 Язык озвучки:</label>
+                <div class="language-selector">
+                    <div class="language-option">
+                        <input type="radio" id="lang-ru" name="language" value="ru" checked>
+                        <label for="lang-ru">🇷🇺 Русский</label>
+                    </div>
+                    <div class="language-option">
+                        <input type="radio" id="lang-kk" name="language" value="kk">
+                        <label for="lang-kk">🇰🇿 Казахский</label>
+                    </div>
+                    <div class="language-option">
+                        <input type="radio" id="lang-en" name="language" value="en">
+                        <label for="lang-en">🇬🇧 Английский</label>
+                    </div>
+                </div>
+            </div>
+
+            <button id="startButton" class="generate-button">
+                🎙️ Начать реалтайм озвучку
+            </button>
+        </div>
+
+        <div id="status" class="status"></div>
+
+        <div class="info-box">
+            <strong>ℹ️ Режим реалтайм с lip-sync:</strong>
+            • Текст разбивается на короткие фразы<br>
+            • Каждая фраза обрабатывается отдельно<br>
+            • Видео с синхронизацией губ появляется по мере готовности<br>
+            • Аватар начинает говорить через 5-10 секунд
+        </div>
+    </div>
+    </div>
+
+    <script>
+        const textInput = document.getElementById('textInput');
+        const startButton = document.getElementById('startButton');
+        const statusDiv = document.getElementById('status');
+        const avatarImage = document.getElementById('avatarImage');
+        const videoPlayer = document.getElementById('videoPlayer');
+
+        let isProcessing = false;
+        let videoQueue = [];
+        let isPlaying = false;
+
+        function showStatus(message, type) {
+            statusDiv.textContent = message;
+            statusDiv.className = `status active ${type}`;
+        }
+
+        function hideStatus() {
+            statusDiv.className = 'status';
+        }
+
+        async function playNextVideo() {
+            if (isPlaying || videoQueue.length === 0) return;
+            
+            isPlaying = true;
+            const videoBlob = videoQueue.shift();
+            const videoUrl = URL.createObjectURL(videoBlob);
+            
+            // Показываем видео, скрываем аватар
+            avatarImage.style.display = 'none';
+            videoPlayer.style.display = 'block';
+            videoPlayer.className = 'video-result active';
+            
+            videoPlayer.src = videoUrl;
+            
+            // После окончания видео - показать аватар или следующее видео
+            videoPlayer.onended = () => {
+                URL.revokeObjectURL(videoUrl);
+                isPlaying = false;
+                
+                if (videoQueue.length > 0) {
+                    // Играем следующий чанк
+                    playNextVideo();
+                } else if (!isProcessing) {
+                    // Все чанки закончились
+                    setTimeout(() => {
+                        videoPlayer.style.display = 'none';
+                        videoPlayer.className = 'video-result';
+                        avatarImage.style.display = 'block';
+                    }, 500);
+                } else {
+                    // Ждем следующие чанки
+                    playNextVideo();
+                }
+            };
+        }
+
+        async function processChunk(text, language, index, totalChunks) {
+            showStatus(`� Обработка чанка ${index + 1}/${totalChunks}...`, 'loading');
+            
+            const response = await fetch('/api/generate_stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 
+                    text: text, 
+                    language: language,
+                    chunk_index: index
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Ошибка чанка ${index + 1}`);
+            }
+
+            const blob = await response.blob();
+            videoQueue.push(blob);
+            
+            // Начинаем воспроизведение как только готов первый чанк
+            if (index === 0) {
+                showStatus('🎬 Аватар начинает говорить...', 'success');
+                playNextVideo();
+            } else {
+                playNextVideo();
+            }
+        }
+
+        async function startRealtime() {
+            const text = textInput.value.trim();
+            
+            if (!text) {
+                showStatus('❌ Пожалуйста, введите текст', 'error');
+                return;
+            }
+
+            if (isProcessing) {
+                showStatus('⚠️ Уже идет обработка', 'error');
+                return;
+            }
+
+            const language = document.querySelector('input[name="language"]:checked').value;
+
+            isProcessing = true;
+            videoQueue = [];
+            startButton.disabled = true;
+            startButton.innerHTML = '<span class="spinner"></span> Генерация...';
+
+            showStatus('✂️ Разбивка текста на чанки...', 'loading');
+
+            try {
+                // Разбиваем текст на предложения (короткие для быстрой обработки)
+                const sentences = text.match(/[^\.!\?]+[\.!\?]+/g) || [text];
+                
+                // Дополнительно разбиваем длинные предложения
+                const chunks = [];
+                sentences.forEach(sentence => {
+                    const words = sentence.split(' ');
+                    if (words.length > 15) {
+                        // Разбиваем длинное предложение на куски по 10-15 слов
+                        for (let i = 0; i < words.length; i += 12) {
+                            chunks.push(words.slice(i, i + 12).join(' '));
+                        }
+                    } else {
+                        chunks.push(sentence.trim());
+                    }
+                });
+                
+                const totalChunks = chunks.length;
+                showStatus(`📦 Создано ${totalChunks} чанков. Начинаем обработку...`, 'loading');
+
+                // Обрабатываем чанки последовательно, но показываем по мере готовности
+                for (let i = 0; i < chunks.length; i++) {
+                    const chunk = chunks[i].trim();
+                    if (!chunk) continue;
+                    
+                    await processChunk(chunk, language, i, totalChunks);
+                }
+
+                isProcessing = false;
+                showStatus('✅ Все чанки обработаны!', 'success');
+                setTimeout(() => {
+                    if (!isPlaying) hideStatus();
+                }, 3000);
+
+            } catch (error) {
+                console.error('Ошибка:', error);
+                showStatus(`❌ Ошибка: ${error.message}`, 'error');
+                isProcessing = false;
+                videoPlayer.style.display = 'none';
+                videoPlayer.className = 'video-result';
+                avatarImage.style.display = 'block';
+            } finally {
+                startButton.disabled = false;
+                startButton.innerHTML = '🎙️ Начать реалтайм озвучку';
+            }
+        }
+
+        // События
+        startButton.addEventListener('click', startRealtime);
+
+        // Enter в textarea для отправки (с Ctrl/Cmd)
+        textInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                startRealtime();
+            }
+        });
+
+        // Проверка состояния сервиса при загрузке
+        fetch('/api/health')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ready') {
+                    console.log('✅ Сервис готов к работе');
+                }
+            })
+            .catch(err => {
+                console.error('Ошибка проверки сервиса:', err);
+                showStatus('⚠️ Сервис недоступен', 'error');
+            });
+    </script>
+</body>
+</html>

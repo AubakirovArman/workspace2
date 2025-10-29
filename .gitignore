@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.cache/
+# Logs
+*.log
+app.log
+
+# Временные файлы
+temp/
+temp_web/
+*.wav
+*.mp3
+*.avi
+
+# Выходные файлы
+outputs/*.mp4
+outputs/*.avi
+
+# Модели (слишком большие для git)
+*.pt
+*.pth
+*.tar.gz
+# Лишние файлы
+musor/
+result_lipsync.mp4
+my-audio.wav
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
