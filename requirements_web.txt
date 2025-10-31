@@ -8,6 +8,7 @@ requests==2.31.0
 # Зависимости из modern-lipsync
 torch>=2.1.0
 torchvision>=0.16.0
+torchaudio>=2.1.0
 numpy>=1.26.4
 opencv-python==4.8.1.78
 tqdm==4.66.1
@@ -18,3 +19,4 @@ numba>=0.58.1
 
 # Дополнительные утилиты
 Pillow==10.1.0
+pydub>=0.25.1  # Для разбиения аудио (параллельная обработка)

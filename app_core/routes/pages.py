@@ -14,3 +14,8 @@ def index():
 @pages_bp.route('/realtime')
 def realtime():
     return render_template('realtime.html')
+
+
+@pages_bp.route('/parallel_test')
+def parallel_test():
+    return render_template('parallel_test.html')

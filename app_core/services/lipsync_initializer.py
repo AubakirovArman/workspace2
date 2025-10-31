@@ -187,6 +187,62 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
             )
             print(f"⚡ Предобработка детекции (NoGAN) завершена за {time.time() - preload_start:.2f}s")
 
+    # Загрузка дополнительных GAN моделей для параллельной обработки
+    gan2_service: Optional[LipsyncService] = None
+    gan3_service: Optional[LipsyncService] = None
+    
+    print("\n📦 Загрузка второй GAN модели (для параллельной обработки)...")
+    start = time.time()
+    gan2_service = LipsyncService(
+        checkpoint_path=CHECKPOINT_PATH_GAN,
+        **common_kwargs
+    )
+    model_ready_time = time.time()
+    print(f"✅ GAN-2 модель загружена за {model_ready_time - start:.2f}s")
+
+    if use_static_cache:
+        preload_start = time.time()
+        gan2_service.preload_static_face(
+            face_path=AVATAR_IMAGE,
+            fps=AVATAR_FPS,
+            pads=(0, 50, 0, 0)
+        )
+        print(f"⚡ Предобработка аватара (GAN-2) завершена за {time.time() - preload_start:.2f}s")
+    else:
+        preload_start = time.time()
+        gan2_service.preload_video_cache(
+            face_path=AVATAR_IMAGE,
+            fps=AVATAR_FPS,
+            pads=(0, 50, 0, 0)
+        )
+        print(f"⚡ Предобработка детекции (GAN-2) завершена за {time.time() - preload_start:.2f}s")
+
+    print("\n📦 Загрузка третьей GAN модели (для параллельной обработки)...")
+    start = time.time()
+    gan3_service = LipsyncService(
+        checkpoint_path=CHECKPOINT_PATH_GAN,
+        **common_kwargs
+    )
+    model_ready_time = time.time()
+    print(f"✅ GAN-3 модель загружена за {model_ready_time - start:.2f}s")
+
+    if use_static_cache:
+        preload_start = time.time()
+        gan3_service.preload_static_face(
+            face_path=AVATAR_IMAGE,
+            fps=AVATAR_FPS,
+            pads=(0, 50, 0, 0)
+        )
+        print(f"⚡ Предобработка аватара (GAN-3) завершена за {time.time() - preload_start:.2f}s")
+    else:
+        preload_start = time.time()
+        gan3_service.preload_video_cache(
+            face_path=AVATAR_IMAGE,
+            fps=AVATAR_FPS,
+            pads=(0, 50, 0, 0)
+        )
+        print(f"⚡ Предобработка детекции (GAN-3) завершена за {time.time() - preload_start:.2f}s")
+
     print("\n🖼️  Предзагрузка аватара...")
     avatar_preloaded = None
     try:
@@ -220,7 +276,8 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
 
     print("\n" + "=" * 60)
     print("✅ Сервис полностью готов к работе!")
+    print(f"   🚀 Загружено моделей для параллельной обработки: 3x GAN + 1x NoGAN")
     print("=" * 60 + "\n")
 
-    set_state(gan_service, nogan_service, avatar_preloaded, use_static_cache)
+    set_state(gan_service, nogan_service, avatar_preloaded, use_static_cache, gan2_service, gan3_service)
     return gan_service, nogan_service, avatar_preloaded

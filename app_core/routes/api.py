@@ -12,7 +12,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from .. import state
 from ..config import AVATAR_FPS, AVATAR_IMAGE, AVATAR_PREVIEW_PATH, OUTPUT_DIR, TEMP_DIR
-from ..services import convert_to_wav, generate_tts
+from ..services import convert_to_wav, generate_tts, parallel_lipsync_process, estimate_optimal_chunks
 
 api_bp = Blueprint('api', __name__)
 
@@ -40,6 +40,8 @@ def _collect_service_features(service):
 def health():
     gan_ready = state.lipsync_service_gan is not None
     nogan_ready = state.lipsync_service_nogan is not None
+    gan2_ready = state.lipsync_service_gan2 is not None
+    gan3_ready = state.lipsync_service_gan3 is not None
 
     if gan_ready:
         status = 'ready'
@@ -48,13 +50,29 @@ def health():
     else:
         status = 'offline'
 
+    # Подсчитываем количество моделей для параллельной обработки
+    parallel_models = 0
+    if gan_ready:
+        parallel_models += 1
+    if gan2_ready:
+        parallel_models += 1
+    if gan3_ready:
+        parallel_models += 1
+    if nogan_ready:
+        parallel_models += 1
+
     return jsonify({
         'status': status,
         'hd_model_loaded': gan_ready,  # backward compatibility
         'gan_model_loaded': gan_ready,
+        'gan2_model_loaded': gan2_ready,
+        'gan3_model_loaded': gan3_ready,
         'nogan_model_loaded': nogan_ready,
+        'parallel_models_count': parallel_models,
         'models': {
             'gan': _collect_service_features(state.lipsync_service_gan),
+            'gan2': _collect_service_features(state.lipsync_service_gan2),
+            'gan3': _collect_service_features(state.lipsync_service_gan3),
             'nogan': _collect_service_features(state.lipsync_service_nogan)
         },
         'avatar_loaded': state.avatar_preloaded is not None,
@@ -392,6 +410,133 @@ def cleanup():
 
 
 _register_r_alias('/r/api/cleanup', cleanup, methods=['POST'])
+
+
+@api_bp.route('/api/generate_parallel', methods=['POST'])
+def generate_avatar_speech_parallel():
+    """
+    🚀 БЫСТРАЯ генерация с параллельной обработкой на двух моделях
+    Ускорение до ~1.8x по сравнению с обычным режимом
+    """
+    try:
+        data = request.get_json()
+        if not data or 'text' not in data:
+            return jsonify({'error': 'Требуется поле "text"'}), 400
+
+        text = data['text'].strip()
+        language = data.get('language', 'ru')
+        num_workers = int(data.get('num_workers', 3))  # По умолчанию 3 модели
+        use_only_gan = data.get('use_only_gan', True)  # По умолчанию только GAN
+
+        if not text:
+            return jsonify({'error': 'Текст не может быть пустым'}), 400
+        if language not in ['ru', 'kk', 'en']:
+            return jsonify({'error': 'Неподдерживаемый язык'}), 400
+
+        # Проверяем наличие моделей
+        if state.lipsync_service_gan is None:
+            return jsonify({
+                'error': 'Для параллельной обработки требуется хотя бы одна GAN модель',
+                'available_models': {
+                    'gan': state.lipsync_service_gan is not None,
+                    'gan2': state.lipsync_service_gan2 is not None,
+                    'gan3': state.lipsync_service_gan3 is not None,
+                    'nogan': state.lipsync_service_nogan is not None
+                }
+            }), 503
+
+        # Подсчитываем доступные модели
+        available_models = 1  # GAN всегда есть
+        if state.lipsync_service_gan2:
+            available_models += 1
+        if state.lipsync_service_gan3:
+            available_models += 1
+        if not use_only_gan and state.lipsync_service_nogan:
+            available_models += 1
+
+        print("\n" + "=" * 60)
+        print(f"🚀 ПАРАЛЛЕЛЬНАЯ ГЕНЕРАЦИЯ ({available_models} модели)")
+        print("=" * 60)
+        print(f"Режим: {'только GAN' if use_only_gan else 'GAN + NOGAN'}")
+        print(f"Текст: {text}")
+        print(f"Язык: {language}")
+        print(f"Воркеры: {num_workers}")
+
+        start_total = time.time()
+
+        # 1. TTS генерация
+        start = time.time()
+        audio_data = generate_tts(text, language)
+        tts_time = time.time() - start
+
+        # 2. Конвертация аудио
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        audio_path = os.path.join(TEMP_DIR, f'audio_parallel_{timestamp}.wav')
+        start = time.time()
+        audio_waveform, audio_sample_rate = convert_to_wav(audio_data, audio_path)
+        convert_time = time.time() - start
+
+        # Определяем длительность аудио
+        import torchaudio
+        audio_duration = audio_waveform.shape[-1] / audio_sample_rate
+        print(f"📊 Длительность аудио: {audio_duration:.2f}s")
+
+        # Оптимальное количество чанков
+        optimal_chunks = estimate_optimal_chunks(audio_duration, num_models=available_models)
+        print(f"📦 Оптимальное разбиение: {optimal_chunks} чанков")
+
+        # 3. Параллельная обработка
+        output_path = os.path.join(OUTPUT_DIR, f'avatar_parallel_{timestamp}.mp4')
+        
+        parallel_stats = parallel_lipsync_process(
+            gan_service=state.lipsync_service_gan,
+            nogan_service=state.lipsync_service_nogan,
+            audio_path=audio_path,
+            output_path=output_path,
+            num_workers=optimal_chunks,
+            fps=AVATAR_FPS,
+            use_cached=True,  # Используем предзагруженное лицо
+            gan2_service=state.lipsync_service_gan2,
+            gan3_service=state.lipsync_service_gan3,
+            use_only_gan=use_only_gan
+        )
+
+        total_time = time.time() - start_total
+
+        # Очистка временного аудио
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
+        print("\n📊 Статистика параллельной обработки:")
+        print(f"   TTS генерация:    {tts_time:.2f}s")
+        print(f"   Конвертация:      {convert_time:.2f}s")
+        print(f"   Разбиение аудио:  {parallel_stats['split_time']:.2f}s")
+        print(f"   Параллельная обработка: {parallel_stats['process_time']:.2f}s")
+        print(f"   Склейка видео:    {parallel_stats['merge_time']:.2f}s")
+        print(f"   Количество чанков: {parallel_stats['num_chunks']}")
+        print("   ─────────────────────────")
+        print(f"   ИТОГО:            {total_time:.2f}s")
+        print(f"   Ускорение:        {parallel_stats['speedup']}")
+        print(f"\n✅ Видео готово: {output_path}")
+        print("=" * 60 + "\n")
+
+        return send_file(
+            output_path,
+            mimetype='video/mp4',
+            as_attachment=True,
+            download_name='avatar_speech_parallel.mp4'
+        )
+
+    except Exception as e:
+        print(f"\n❌ Ошибка параллельной обработки: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+_register_r_alias('/r/api/generate_parallel', generate_avatar_speech_parallel, methods=['POST'])
+
+
 _IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 _VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'}
 

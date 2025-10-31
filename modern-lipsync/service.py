@@ -672,6 +672,96 @@ class LipsyncService:
             if result != 0:
                 raise RuntimeError(f"ffmpeg failed with code {result}")
 
+    def process_with_preloaded(
+        self,
+        audio_path: str,
+        output_path: Optional[str] = None,
+        fps: float = 25.0,
+        audio_waveform: Optional[torch.Tensor] = None,
+        audio_sample_rate: int = 16000,
+        frame_sink: Optional[Callable[[np.ndarray], None]] = None
+    ) -> dict:
+        """
+        Быстрая обработка с использованием предзагруженного статического лица.
+        Пропускает загрузку видео и детекцию лица - использует кэш.
+        
+        Args:
+            audio_path: Путь к аудио файлу
+            output_path: Путь для сохранения видео (если None, то не сохраняет)
+            fps: FPS для видео
+            audio_waveform: Опциональный готовый аудио тензор
+            audio_sample_rate: Частота дискретизации аудио
+            frame_sink: Опциональная функция для потоковой обработки кадров
+            
+        Returns:
+            dict с информацией о времени обработки
+        """
+        # Проверяем наличие кэша
+        if not self._static_cache:
+            raise RuntimeError(
+                "Статическое лицо не предзагружено. "
+                "Сначала вызовите preload_static_face() или используйте process() с static=True"
+            )
+        
+        # Берём первую запись из кэша (обычно она одна)
+        cache_entry = next(iter(self._static_cache.values()))
+        
+        stats = {}
+        total_start = time.time()
+        
+        # Используем предзагруженные данные
+        full_frames = list(cache_entry['frames'])
+        video_fps = cache_entry.get('fps', fps)
+        cached_face = cache_entry['face'].copy()
+        cached_coords = cache_entry['coords']
+        static_face_resized = cache_entry.get('resized_face')
+        
+        stats['load_video_time'] = 0.0  # Из кэша!
+        stats['face_detection_time'] = 0.0  # Из кэша!
+        
+        # Обработка аудио
+        start = time.time()
+        mel, mel_chunks = self._process_audio(
+            audio_path, video_fps, audio_waveform, audio_sample_rate
+        )
+        stats['process_audio_time'] = time.time() - start
+        stats['num_mel_chunks'] = len(mel_chunks)
+        
+        # Подгоняем количество кадров под аудио
+        full_frames = full_frames[:len(mel_chunks)]
+        stats['num_frames'] = len(full_frames)
+        stats['fps'] = video_fps
+        
+        # Используем предзагруженное лицо
+        face_det_results = [[cached_face, cached_coords]]
+        
+        # Инференс модели
+        start = time.time()
+        self._run_inference(
+            full_frames,
+            face_det_results,
+            mel_chunks,
+            output_path,
+            video_fps,
+            True,  # static=True
+            static_face_resized,
+            frame_sink=frame_sink
+        )
+        stats['inference_time'] = time.time() - start
+        
+        # Постобработка выполняется внутри _run_inference
+        stats['postprocess_time'] = 0.0
+        stats['write_time'] = 0.0
+        
+
+        
+        stats['total_time'] = time.time() - total_start
+        stats['segmentation'] = self.segmentation_enabled
+        stats['super_resolution'] = self.sr_enabled
+        stats['real_esrgan'] = self.realesrgan_enabled
+        
+        return stats
+
     def preload_static_face(
         self,
         face_path: str,

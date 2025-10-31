@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 Параллельная обработка - Тест</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+
+        .method-card {
+            background: #f7f9fc;
+            border-radius: 15px;
+            padding: 25px;
+            border: 2px solid #e1e8ed;
+        }
+
+        .method-card h2 {
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .method-card.parallel {
+            border-color: #667eea;
+            background: linear-gradient(135deg, #f5f7ff 0%, #e8ebff 100%);
+        }
+
+        .method-card.sequential {
+            border-color: #764ba2;
+            background: linear-gradient(135deg, #faf5ff 0%, #f0e5ff 100%);
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: vertical;
+            margin-bottom: 15px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        select, button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        select {
+            background: white;
+            border: 2px solid #ddd;
+            color: #333;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            transition: transform 0.2s, box-shadow 0.2s;
+            flex: 1;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            display: none;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .result {
+            margin-top: 15px;
+            display: none;
+        }
+
+        .result.active {
+            display: block;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            background: #000;
+        }
+
+        .stats {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+
+        .stats-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .stats-item:last-child {
+            border-bottom: none;
+            font-weight: bold;
+            font-size: 16px;
+            padding-top: 10px;
+            margin-top: 5px;
+            border-top: 2px solid #667eea;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            border-left: 4px solid #c33;
+        }
+
+        .winner {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #4caf50;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .method-card {
+            position: relative;
+        }
+
+        .info-box {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 30px;
+            color: #856404;
+        }
+
+        @media (max-width: 768px) {
+            .comparison {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Сравнение: Параллельная vs Обычная обработка</h1>
+            <p>Тестируйте скорость обработки на трёх GAN моделях одновременно (ускорение до 3x!)</p>
+        </header>
+
+        <div class="info-box">
+            <strong>ℹ️ Инструкция:</strong>
+            Введите текст, выберите язык и нажмите обе кнопки. 
+            Параллельная обработка на <strong>3 GAN моделях</strong> даёт ускорение до <strong>3x</strong> на длинных текстах (> 20 секунд аудио).
+        </div>
+
+        <div class="comparison">
+            <!-- Параллельная обработка -->
+            <div class="method-card parallel">
+                <h2>
+                    🚀 Параллельная (3 GAN модели)
+                </h2>
+                
+                <textarea id="text-parallel" placeholder="Введите длинный текст для озвучки...">Добрый день! Сегодня мы проведём тест параллельной обработки на двух моделях одновременно. Это позволит нам ускорить генерацию видео в полтора-два раза. Система автоматически разделит аудио на части и обработает их параллельно на GAN и NOGAN моделях, а затем склеит результат в один файл.</textarea>
+                
+                <div class="controls">
+                    <select id="language-parallel">
+                        <option value="ru">🇷🇺 Русский</option>
+                        <option value="kk">🇰🇿 Казахский</option>
+                        <option value="en">🇺🇸 English</option>
+                    </select>
+                    <button id="btn-parallel">🚀 Генерировать (Параллельно)</button>
+                </div>
+
+                <div class="loading" id="loading-parallel">
+                    <div class="spinner"></div>
+                    <p>Обработка на 3 GAN моделях...</p>
+                </div>
+
+                <div class="result" id="result-parallel"></div>
+            </div>
+
+            <!-- Обычная обработка -->
+            <div class="method-card sequential">
+                <h2>
+                    🎯 Обычная (1 модель)
+                </h2>
+                
+                <textarea id="text-sequential" placeholder="Введите длинный текст для озвучки...">Добрый день! Сегодня мы проведём тест параллельной обработки на двух моделях одновременно. Это позволит нам ускорить генерацию видео в полтора-два раза. Система автоматически разделит аудио на части и обработает их параллельно на GAN и NOGAN моделях, а затем склеит результат в один файл.</textarea>
+                
+                <div class="controls">
+                    <select id="language-sequential">
+                        <option value="ru">🇷🇺 Русский</option>
+                        <option value="kk">🇰🇿 Казахский</option>
+                        <option value="en">🇺🇸 English</option>
+                    </select>
+                    <button id="btn-sequential">🎯 Генерировать (Обычно)</button>
+                </div>
+
+                <div class="loading" id="loading-sequential">
+                    <div class="spinner"></div>
+                    <p>Обработка на 1 модели...</p>
+                </div>
+
+                <div class="result" id="result-sequential"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let parallelTime = 0;
+        let sequentialTime = 0;
+
+        // Параллельная обработка
+        document.getElementById('btn-parallel').addEventListener('click', async () => {
+            const text = document.getElementById('text-parallel').value.trim();
+            const language = document.getElementById('language-parallel').value;
+            
+            if (!text) {
+                alert('Введите текст!');
+                return;
+            }
+
+            const btn = document.getElementById('btn-parallel');
+            const loading = document.getElementById('loading-parallel');
+            const result = document.getElementById('result-parallel');
+
+            btn.disabled = true;
+            loading.classList.add('active');
+            result.classList.remove('active');
+            result.innerHTML = '';
+
+            const startTime = Date.now();
+
+            try {
+                const response = await fetch('/api/generate_parallel', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        text, 
+                        language,
+                        num_workers: 3,
+                        use_only_gan: true
+                    })
+                });
+
+                const endTime = Date.now();
+                parallelTime = (endTime - startTime) / 1000;
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Ошибка сервера');
+                }
+
+                const blob = await response.blob();
+                const videoUrl = URL.createObjectURL(blob);
+
+                result.innerHTML = `
+                    <video controls autoplay>
+                        <source src="${videoUrl}" type="video/mp4">
+                    </video>
+                    <div class="stats">
+                        <div class="stats-item">
+                            <span>⏱️ Общее время:</span>
+                            <span>${parallelTime.toFixed(2)}s</span>
+                        </div>
+                        <div class="stats-item">
+                            <span>🔧 Метод:</span>
+                            <span>Параллельная обработка</span>
+                        </div>
+                        <div class="stats-item">
+                            <span>📦 Модели:</span>
+                            <span>3x GAN</span>
+                        </div>
+                    </div>
+                `;
+                result.classList.add('active');
+
+                checkWinner();
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Ошибка: ${error.message}</div>`;
+                result.classList.add('active');
+            } finally {
+                btn.disabled = false;
+                loading.classList.remove('active');
+            }
+        });
+
+        // Обычная обработка
+        document.getElementById('btn-sequential').addEventListener('click', async () => {
+            const text = document.getElementById('text-sequential').value.trim();
+            const language = document.getElementById('language-sequential').value;
+            
+            if (!text) {
+                alert('Введите текст!');
+                return;
+            }
+
+            const btn = document.getElementById('btn-sequential');
+            const loading = document.getElementById('loading-sequential');
+            const result = document.getElementById('result-sequential');
+
+            btn.disabled = true;
+            loading.classList.add('active');
+            result.classList.remove('active');
+            result.innerHTML = '';
+
+            const startTime = Date.now();
+
+            try {
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text, language })
+                });
+
+                const endTime = Date.now();
+                sequentialTime = (endTime - startTime) / 1000;
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Ошибка сервера');
+                }
+
+                const blob = await response.blob();
+                const videoUrl = URL.createObjectURL(blob);
+
+                result.innerHTML = `
+                    <video controls autoplay>
+                        <source src="${videoUrl}" type="video/mp4">
+                    </video>
+                    <div class="stats">
+                        <div class="stats-item">
+                            <span>⏱️ Общее время:</span>
+                            <span>${sequentialTime.toFixed(2)}s</span>
+                        </div>
+                        <div class="stats-item">
+                            <span>🔧 Метод:</span>
+                            <span>Последовательная обработка</span>
+                        </div>
+                        <div class="stats-item">
+                            <span>📦 Модель:</span>
+                            <span>GAN</span>
+                        </div>
+                    </div>
+                `;
+                result.classList.add('active');
+
+                checkWinner();
+            } catch (error) {
+                result.innerHTML = `<div class="error">❌ Ошибка: ${error.message}</div>`;
+                result.classList.add('active');
+            } finally {
+                btn.disabled = false;
+                loading.classList.remove('active');
+            }
+        });
+
+        function checkWinner() {
+            if (parallelTime > 0 && sequentialTime > 0) {
+                // Убираем старые badges
+                document.querySelectorAll('.winner').forEach(el => el.remove());
+
+                const speedup = (sequentialTime / parallelTime).toFixed(2);
+                
+                if (parallelTime < sequentialTime) {
+                    const badge = document.createElement('div');
+                    badge.className = 'winner';
+                    badge.textContent = `⚡ Быстрее в ${speedup}x раз`;
+                    document.querySelector('.method-card.parallel').appendChild(badge);
+                } else {
+                    const badge = document.createElement('div');
+                    badge.className = 'winner';
+                    badge.style.background = '#ff9800';
+                    badge.textContent = `🎯 Эффективнее`;
+                    document.querySelector('.method-card.sequential').appendChild(badge);
+                }
+            }
+        }
+
+        // Синхронизация текста между полями
+        document.getElementById('text-parallel').addEventListener('input', (e) => {
+            document.getElementById('text-sequential').value = e.target.value;
+        });
+
+        document.getElementById('text-sequential').addEventListener('input', (e) => {
+            document.getElementById('text-parallel').value = e.target.value;
+        });
+
+        // Синхронизация языка
+        document.getElementById('language-parallel').addEventListener('change', (e) => {
+            document.getElementById('language-sequential').value = e.target.value;
+        });
+
+        document.getElementById('language-sequential').addEventListener('change', (e) => {
+            document.getElementById('language-parallel').value = e.target.value;
+        });
+    </script>
+</body>
+</html>
