@@ -1,0 +1,226 @@
+"""Initialization logic for the preloaded lipsync service."""
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+from typing import Optional, Tuple
+
+import torch
+
+from ..config import (
+    AVATAR_FPS,
+    AVATAR_IMAGE,
+    AVATAR_PREVIEW_PATH,
+    AVATAR_STATIC_MODE,
+    CHECKPOINT_PATH_GAN,
+    CHECKPOINT_PATH_NOGAN,
+    ENABLE_REALESRGAN,
+    ENABLE_SEGMENTATION,
+    ENABLE_SUPER_RESOLUTION,
+    HD_MODULES_ROOT,
+    REALESRGAN_OUTSCALE,
+    REALESRGAN_PATH,
+    SEGMENTATION_PATH_HD,
+    SR_PATH_HD,
+)
+from ..state import set_state
+
+from service import LipsyncService  # noqa: E402
+
+
+_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'}
+
+
+def _is_video(path: str) -> bool:
+    return Path(path).suffix.lower() in _VIDEO_EXTENSIONS
+
+
+def _is_image(path: str) -> bool:
+    return Path(path).suffix.lower() in _IMAGE_EXTENSIONS
+
+
+def _resolve_realesrgan_path() -> Optional[str]:
+    if not ENABLE_REALESRGAN:
+        print("ℹ️ Real-ESRGAN отключен (ENABLE_REALESRGAN=0).")
+        return None
+    if os.path.exists(REALESRGAN_PATH):
+        print(f"✅ Real-ESRGAN веса найдены: {REALESRGAN_PATH} (outscale={REALESRGAN_OUTSCALE})")
+        return REALESRGAN_PATH
+    print(f"⚠️ Предупреждение: веса Real-ESRGAN не найдены ({REALESRGAN_PATH}). Улучшение будет пропущено.")
+    return None
+
+
+def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Optional[object]]:
+    print("\n" + "=" * 60)
+    print("🚀 Инициализация Avatar Lipsync Service")
+    print("=" * 60)
+
+    if not os.path.exists(AVATAR_IMAGE):
+        raise FileNotFoundError(f"Аватар не найден: {AVATAR_IMAGE}")
+    if not os.path.exists(CHECKPOINT_PATH_GAN):
+        raise FileNotFoundError(f"GAN модель не найдена: {CHECKPOINT_PATH_GAN}")
+    if not os.path.exists(CHECKPOINT_PATH_NOGAN):
+        print(f"⚠️ Предупреждение: NoGAN модель не найдена ({CHECKPOINT_PATH_NOGAN}). Страница realtime2 будет недоступна.")
+    realesrgan_available = _resolve_realesrgan_path()
+
+    print(f"✅ Аватар найден: {AVATAR_IMAGE}")
+    print(f"✅ GAN модель найдена: {CHECKPOINT_PATH_GAN}")
+    if os.path.exists(CHECKPOINT_PATH_NOGAN):
+        print(f"✅ NoGAN модель найдена: {CHECKPOINT_PATH_NOGAN}")
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"🔧 Устройство: {device}")
+    if device == 'cuda':
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+        if hasattr(torch, 'set_float32_matmul_precision'):
+            torch.set_float32_matmul_precision('high')
+
+    use_hd_modules = ENABLE_SEGMENTATION or ENABLE_SUPER_RESOLUTION or ENABLE_REALESRGAN
+
+    hd_modules_root: Optional[str] = None
+    if use_hd_modules:
+        if HD_MODULES_ROOT.exists():
+            hd_modules_root = str(HD_MODULES_ROOT)
+            print(f"✅ Найдены модули Wav2Lip-HD: {hd_modules_root}")
+        else:
+            print(f"⚠️ Папка с кодом Wav2Lip-HD не найдена: {HD_MODULES_ROOT}")
+    else:
+        print("ℹ️ Дополнительные HD модули отключены (ENABLE_* флаги = 0).")
+
+    segmentation_path: Optional[str] = None
+    if ENABLE_SEGMENTATION:
+        if os.path.exists(SEGMENTATION_PATH_HD):
+            segmentation_path = SEGMENTATION_PATH_HD
+            print(f"✅ Модель сегментации включена: {SEGMENTATION_PATH_HD}")
+        else:
+            print(f"⚠️ Предупреждение: файл сегментации не найден ({SEGMENTATION_PATH_HD}). Будет использована только Wav2Lip без сегментации.")
+    else:
+        print("ℹ️ Сегментация отключена (ENABLE_SEGMENTATION=0).")
+
+    sr_path: Optional[str] = None
+    if ENABLE_SUPER_RESOLUTION:
+        if os.path.exists(SR_PATH_HD):
+            sr_path = SR_PATH_HD
+            print(f"✅ Суперразрешение ESRGAN включено: {SR_PATH_HD}")
+        else:
+            print(f"⚠️ Предупреждение: файл суперразрешения не найден ({SR_PATH_HD}). Будет использована базовая модель без ESRGAN.")
+    else:
+        print("ℹ️ Суперразрешение отключено (ENABLE_SUPER_RESOLUTION=0).")
+
+    common_kwargs = dict(
+        device=device,
+        face_det_batch_size=16,
+        wav2lip_batch_size=960,
+        segmentation_path=segmentation_path,
+        sr_path=sr_path,
+        modules_root=hd_modules_root,
+        realesrgan_path=realesrgan_available,
+        realesrgan_outscale=REALESRGAN_OUTSCALE
+    )
+
+    is_video_source = _is_video(AVATAR_IMAGE)
+    use_static_cache = AVATAR_STATIC_MODE or not is_video_source
+    if not AVATAR_STATIC_MODE and not is_video_source:
+        print("⚠️ Запрошен динамический режим, но источник не видео. Используется статичный режим.")
+
+    if use_static_cache:
+        print("🎯 Режим аватара: статичный (предкэшированное лицо)")
+    else:
+        print("🎞️ Режим аватара: динамический (используется всё видео)")
+
+    print("\n📦 Загрузка GAN модели в память...")
+    start = time.time()
+    gan_service = LipsyncService(
+        checkpoint_path=CHECKPOINT_PATH_GAN,
+        **common_kwargs
+    )
+    model_ready_time = time.time()
+    print(f"✅ GAN модель загружена за {model_ready_time - start:.2f}s")
+
+    if use_static_cache:
+        preload_start = time.time()
+        gan_service.preload_static_face(
+            face_path=AVATAR_IMAGE,
+            fps=AVATAR_FPS,
+            pads=(0, 50, 0, 0)
+        )
+        print(f"⚡ Предобработка аватара (GAN) завершена за {time.time() - preload_start:.2f}s")
+    else:
+        preload_start = time.time()
+        gan_service.preload_video_cache(
+            face_path=AVATAR_IMAGE,
+            fps=AVATAR_FPS,
+            pads=(0, 50, 0, 0)
+        )
+        print(f"⚡ Предобработка детекции (GAN) завершена за {time.time() - preload_start:.2f}s")
+
+    nogan_service: Optional[LipsyncService] = None
+    if os.path.exists(CHECKPOINT_PATH_NOGAN):
+        print("\n📦 Загрузка NoGAN модели в память...")
+        start = time.time()
+        nogan_service = LipsyncService(
+            checkpoint_path=CHECKPOINT_PATH_NOGAN,
+            **common_kwargs
+        )
+        model_ready_time = time.time()
+        print(f"✅ NoGAN модель загружена за {model_ready_time - start:.2f}s")
+
+        if use_static_cache:
+            preload_start = time.time()
+            nogan_service.preload_static_face(
+                face_path=AVATAR_IMAGE,
+                fps=AVATAR_FPS,
+                pads=(0, 50, 0, 0)
+            )
+            print(f"⚡ Предобработка аватара (NoGAN) завершена за {time.time() - preload_start:.2f}s")
+        else:
+            preload_start = time.time()
+            nogan_service.preload_video_cache(
+                face_path=AVATAR_IMAGE,
+                fps=AVATAR_FPS,
+                pads=(0, 50, 0, 0)
+            )
+            print(f"⚡ Предобработка детекции (NoGAN) завершена за {time.time() - preload_start:.2f}s")
+
+    print("\n🖼️  Предзагрузка аватара...")
+    avatar_preloaded = None
+    try:
+        import cv2  # Local import to avoid unnecessary import during unit tests
+
+        preview_saved = False
+        if _is_video(AVATAR_IMAGE):
+            capture = cv2.VideoCapture(AVATAR_IMAGE)
+            success, frame = capture.read()
+            capture.release()
+            if success and frame is not None:
+                avatar_preloaded = frame
+                print(f"✅ Первый кадр видео-аватара: {avatar_preloaded.shape}")
+                preview_saved = cv2.imwrite(AVATAR_PREVIEW_PATH, frame)
+            else:
+                print("⚠️ Не удалось считать первый кадр видео-аватара")
+        else:
+            avatar_preloaded = cv2.imread(AVATAR_IMAGE)
+            if avatar_preloaded is not None:
+                print(f"✅ Аватар загружен: {avatar_preloaded.shape}")
+                preview_saved = cv2.imwrite(AVATAR_PREVIEW_PATH, avatar_preloaded)
+            else:
+                print("⚠️ Не удалось предзагрузить аватар в память")
+
+        if preview_saved:
+            print(f"🖼️  Превью аватара сохранено: {AVATAR_PREVIEW_PATH}")
+        elif avatar_preloaded is not None:
+            print("⚠️ Не удалось сохранить превью аватара")
+    except ImportError:
+        print("⚠️ OpenCV не установлен. Предзагрузка аватара пропущена.")
+
+    print("\n" + "=" * 60)
+    print("✅ Сервис полностью готов к работе!")
+    print("=" * 60 + "\n")
+
+    set_state(gan_service, nogan_service, avatar_preloaded, use_static_cache)
+    return gan_service, nogan_service, avatar_preloaded

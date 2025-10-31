@@ -67,7 +67,7 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '--wav2lip_batch_size', type=int, default=32,
+    '--wav2lip_batch_size', type=int, default=16,
     help='Batch size for Wav2Lip inference'
 )
 
@@ -109,7 +109,7 @@ class ModernLipsyncInference:
         self.args = args
         self.args.img_size = 96
         self.device = args.device
-        self.mel_step_size = 16
+        self.mel_step_size = 20
         
         # Initialize audio processor
         self.audio_processor = ModernAudioProcessor()

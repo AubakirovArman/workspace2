@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Реалтайм озвучка 3 🎛️ (С настройками)</title>
+    <title>Реалтайм HD � (Real-ESRGAN)</title>
     <style>
         * {
             margin: 0;
@@ -338,9 +338,7 @@
             <div class="nav-brand">🎭 Говорящий Аватар</div>
             <ul class="nav-menu">
                 <li><a href="/" class="nav-link">📥 Создать и скачать</a></li>
-                <li><a href="/realtime" class="nav-link">🎙️ Реалтайм (без зубов)</a></li>
-                <li><a href="/realtime2" class="nav-link">🦷 Реалтайм 2 (с зубами)</a></li>
-                <li><a href="/realtime3" class="nav-link active">🎛️ Реалтайм 3 (настройки)</a></li>
+                <li><a href="/realtime3" class="nav-link active">� Реалтайм HD</a></li>
                 <li><a href="/api-test" class="nav-link">🔌 API Test</a></li>
             </ul>
         </div>
@@ -349,8 +347,9 @@
     <!-- Основной контент -->
     <div class="page-wrapper">
     <div class="container">
-        <h1>🎛️ Реалтайм озвучка 3</h1>
-        <p class="subtitle">Экспериментальные настройки для управления зубами и областью рта 🦷⚙️</p>        <div class="avatar-section">
+          <h1>🎬 Реалтайм HD</h1>
+           <p class="subtitle">Wav2Lip-HD + сегментация + Real-ESRGAN для максимально чёткой анимации</p>
+           <div class="avatar-section">
             <div class="avatar-container">
                 <img id="avatarImage" class="avatar-image" src="/api/avatar" alt="Аватар">
                 <video id="videoPlayer" class="video-result" autoplay></video>
@@ -381,21 +380,6 @@
                     <div class="language-option">
                         <input type="radio" id="lang-en" name="language" value="en">
                         <label for="lang-en">🇬🇧 Английский</label>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Настройки модели и padding -->
-            <div class="input-group">
-                <label>🎭 Модель:</label>
-                <div class="language-selector">
-                    <div class="language-option">
-                        <input type="radio" id="model-gan" name="model" value="gan" checked>
-                        <label for="model-gan">🦷 GAN (с зубами)</label>
-                    </div>
-                    <div class="language-option">
-                        <input type="radio" id="model-nogan" name="model" value="nogan">
-                        <label for="model-nogan">😐 NOGAN (без зубов)</label>
                     </div>
                 </div>
             </div>
@@ -441,6 +425,7 @@
             • Текст разбивается на короткие фразы<br>
             • Каждая фраза обрабатывается отдельно<br>
             • Видео с синхронизацией губ появляется по мере готовности<br>
+            • Real-ESRGAN автоматически улучшает каждый кадр<br>
             • Аватар начинает говорить через 5-10 секунд
         </div>
     </div>
@@ -514,7 +499,6 @@
                     text: text, 
                     language: language,
                     chunk_index: index,
-                    model: document.querySelector('input[name="model"]:checked').value,
                     pad_top: parseInt(document.getElementById('pad-top').value),
                     pad_bottom: parseInt(document.getElementById('pad-bottom').value),
                     pad_left: parseInt(document.getElementById('pad-left').value),

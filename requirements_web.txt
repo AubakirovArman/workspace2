@@ -6,15 +6,15 @@ flask-cors==4.0.0
 requests==2.31.0
 
 # Зависимости из modern-lipsync
-torch==2.1.0
-torchvision==0.16.0
-numpy==1.24.3
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.26.4
 opencv-python==4.8.1.78
 tqdm==4.66.1
 scikit-image==0.21.0
 scipy==1.11.3
 librosa==0.10.1
-numba==0.58.1
+numba>=0.58.1
 
 # Дополнительные утилиты
 Pillow==10.1.0
