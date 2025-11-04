@@ -1,0 +1,26 @@
+ Inference Breakdown:
+   Batch Preparation: 1.29s
+   Tensor Conversion: 0.33s
+   Model Forward: 2.17s
+   Postprocessing: 0.18s
+   Pasting Patches: 1.18s
+   Writing Frames: 14.33s
+   FFmpeg Encoding: 0.04s
+   Статистика:
+   TTS генерация:    2.95s
+   Конвертация:      1.37s
+   Lip-sync:         34.66s
+     - Загрузка видео:   0.00s
+     - Обработка аудио:  0.04s
+     - Детекция лица:    0.00s
+     - Инференс модели:  23.53s
+   Режим аватара:    статичный
+   Постобработка:
+     - Сегментация:      ❌
+     - ESRGAN:           ❌
+     - Real-ESRGAN:      ❌
+   ─────────────────────────
+   ИТОГО:            38.98s
+
+
+

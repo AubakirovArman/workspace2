@@ -121,8 +121,7 @@ def parallel_lipsync_process(
     num_workers: int = 2,
     fps: int = 25,
     use_cached: bool = True,
-    gan2_service=None,
-    gan3_service=None,
+    gan_extra_services: Optional[List] = None,
     use_only_gan: bool = False
 ) -> dict:
     """
@@ -136,8 +135,7 @@ def parallel_lipsync_process(
         num_workers: Количество параллельных воркеров (2-3)
         fps: FPS финального видео
         use_cached: Использовать предзагруженное лицо
-        gan2_service: Второй экземпляр GAN (для 3 моделей)
-        gan3_service: Третий экземпляр GAN (для 3 моделей)
+    gan_extra_services: Дополнительные экземпляры GAN (для >1 модели)
         use_only_gan: Использовать только GAN модели (игнорировать NOGAN)
         
     Returns:
@@ -153,17 +151,15 @@ def parallel_lipsync_process(
     print(f"✅ Аудио разбито за {split_time:.2f}s")
     
     # 2. Подготовка списка сервисов
+    gan_pool = [gan_service]
+    if gan_extra_services:
+        gan_pool.extend([svc for svc in gan_extra_services if svc is not None])
+
     if use_only_gan:
-        # Используем только GAN модели
-        available_services = [gan_service]
-        if gan2_service:
-            available_services.append(gan2_service)
-        if gan3_service:
-            available_services.append(gan3_service)
-        services = available_services
+        services = gan_pool
     else:
         # Используем GAN + NOGAN (старое поведение)
-        services = [gan_service, nogan_service] if num_workers == 2 else [gan_service] * num_workers
+        services = [svc for svc in (gan_service, nogan_service) if svc is not None] if num_workers == 2 else [gan_service] * num_workers
     
     # 3. Параллельная обработка чанков
     print(f"🚀 Запуск параллельной обработки на {len(services)} моделях...")
@@ -180,10 +176,12 @@ def parallel_lipsync_process(
             # Определяем имя модели
             if service == gan_service:
                 service_name = "GAN-1"
-            elif gan2_service and service == gan2_service:
-                service_name = "GAN-2"
-            elif gan3_service and service == gan3_service:
-                service_name = "GAN-3"
+            elif gan_extra_services and service in gan_extra_services:
+                try:
+                    service_index = gan_pool.index(service) + 1
+                except ValueError:
+                    service_index = 0
+                service_name = f"GAN-{service_index}" if service_index else "GAN"
             elif service == nogan_service:
                 service_name = "NOGAN"
             else:

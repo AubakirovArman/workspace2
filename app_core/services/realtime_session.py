@@ -14,12 +14,19 @@ import numpy as np
 import torch
 import torchaudio.functional as audio_fn
 try:
-    from aiortc import RTCPeerConnection, RTCSessionDescription
+    from aiortc import (
+        RTCPeerConnection,
+        RTCSessionDescription,
+        RTCConfiguration,
+        RTCIceServer,
+    )
     from aiortc.mediastreams import AudioStreamTrack, MediaStreamError, VideoStreamTrack
     AIORTC_IMPORT_ERROR: Optional[ImportError] = None
 except ImportError as import_error:  # pragma: no cover - optional dependency guard
     RTCPeerConnection = None  # type: ignore[assignment]
     RTCSessionDescription = None  # type: ignore[assignment]
+    RTCConfiguration = None  # type: ignore[assignment]
+    RTCIceServer = None  # type: ignore[assignment]
     MediaStreamError = Exception  # type: ignore[assignment]
     AudioStreamTrack = object  # type: ignore[assignment]
     VideoStreamTrack = object  # type: ignore[assignment]
@@ -59,6 +66,41 @@ def _run_async(coro: Coroutine[Any, Any, T]) -> T:
     return asyncio.run_coroutine_threadsafe(coro, _event_loop).result()
 
 
+_DIRECTION_LINES = {"a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"}
+
+
+def _ensure_sdp_directions(sdp: str) -> str:
+    """Ensure each media section has a direction attribute and validate SDP."""
+    lines = [line for line in sdp.replace("\r\n", "\n").split("\n") if line != ""]
+    normalized: List[str] = []
+    in_media = False
+    media_has_direction = False
+    media_indices: List[int] = []
+
+    for line in lines:
+        if line.startswith("m="):
+            if in_media and not media_has_direction:
+                normalized.append("a=sendrecv")
+            in_media = True
+            media_has_direction = False
+            media_indices.append(len(normalized))
+            normalized.append(line)
+            continue
+
+        if in_media and line in _DIRECTION_LINES:
+            media_has_direction = True
+
+        normalized.append(line)
+
+    if in_media and not media_has_direction:
+        normalized.append("a=sendrecv")
+
+    if not media_indices:
+        raise RuntimeError("Invalid SDP offer: no media sections provided")
+
+    return "\r\n".join(normalized) + "\r\n"
+
+
 @dataclass
 class SessionOptions:
     language: str = "ru"
@@ -69,6 +111,7 @@ class SessionOptions:
     audio_sample_rate: int = 16000
     webrtc_sample_rate: int = 48000
     connection_timeout: float = 12.0
+    low_latency: bool = False
 
 
 class LipsyncVideoStreamTrack(VideoStreamTrack):
@@ -257,13 +300,12 @@ async def _run_stream_pipeline(
                 continue
 
             print(f"🎧 WebRTC TTS chunk #{idx + 1}: {chunk[:60]}{'...' if len(chunk) > 60 else ''}")
-            temp_wav = os.path.join(TEMP_DIR, f"webrtc_{uuid.uuid4().hex}.wav")
 
             # TTS generation and decoding are blocking; run in executor
             audio_bytes = await loop.run_in_executor(None, generate_tts, chunk, options.language)
             waveform, sample_rate = await loop.run_in_executor(
                 None,
-                lambda: convert_to_wav(audio_bytes, temp_wav),
+                lambda: convert_to_wav(audio_bytes, None),
             )
 
             try:
@@ -272,7 +314,7 @@ async def _run_stream_pipeline(
                 def _run_process() -> None:
                     service.process(
                         face_path=AVATAR_IMAGE,
-                        audio_path=temp_wav,
+                        audio_path="",
                         output_path=None,
                         static=True,
                         fps=options.fps,
@@ -280,15 +322,12 @@ async def _run_stream_pipeline(
                         audio_waveform=waveform,
                         audio_sample_rate=sample_rate,
                         frame_sink=frame_sink,
+                        batch_size_override=32 if options.low_latency else None,
                     )
 
                 await loop.run_in_executor(None, _run_process)
             finally:
-                if os.path.exists(temp_wav):
-                    try:
-                        os.remove(temp_wav)
-                    except OSError:
-                        pass
+                pass
 
     except Exception as exc:
         print(f"❌ Realtime pipeline error: {exc}")
@@ -311,20 +350,25 @@ async def _create_webrtc_session(
     if service is None:
         raise RuntimeError("Lipsync service is not initialized")
 
-    pc = RTCPeerConnection(
-        configuration={
-            "iceServers": [
-                {"urls": ["stun:stun.l.google.com:19302"]},
-                {"urls": ["stun:stun1.l.google.com:19302"]},
-            ]
-        }
-    )
+    ice_servers = [
+        RTCIceServer(urls="stun:stun.l.google.com:19302"),
+        RTCIceServer(urls="stun:stun1.l.google.com:19302"),
+    ]
+    pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=ice_servers))
     loop = asyncio.get_running_loop()
 
     video_track = LipsyncVideoStreamTrack(options.fps, loop)
     audio_track = ChunkedAudioStreamTrack(sample_rate=options.webrtc_sample_rate, loop=loop)
     pc.addTrack(video_track)
     pc.addTrack(audio_track)
+
+    # aiortc requires explicit transceiver directions; some browsers omit them in offers.
+    for transceiver in pc.getTransceivers():
+        if transceiver.direction is None:
+            if transceiver.kind == "video":
+                transceiver.direction = "sendonly"
+            elif transceiver.kind == "audio":
+                transceiver.direction = "sendonly"
 
     @pc.on("connectionstatechange")
     async def _on_state_change() -> None:
@@ -335,7 +379,19 @@ async def _create_webrtc_session(
             audio_track.finish()
 
     await pc.setRemoteDescription(offer)
+
+    # Some browsers omit a=direction values in their offer which leaves aiortc
+    # transceivers without a preferred direction. Default to sendrecv so answer
+    # generation doesn't fail.
+    for transceiver in pc.getTransceivers():
+        if transceiver.direction is None:
+            transceiver.direction = "sendrecv"
+        if getattr(transceiver, "_offerDirection", None) is None:
+            transceiver._offerDirection = transceiver.direction
     answer = await pc.createAnswer()
+    print("===== Generated local SDP =====")
+    print(answer.sdp)
+    print("===== End local SDP =====")
     await pc.setLocalDescription(answer)
 
     async def _wait_for_ice_gathering_complete(timeout: float = 5.0) -> None:
@@ -366,6 +422,7 @@ def start_webrtc_session(
     language: str = "ru",
     pads: Tuple[int, int, int, int] = (0, 50, 0, 0),
     fps: float = 25.0,
+    low_latency: bool = False,
 ) -> RTCSessionDescription:
     text = text.strip()
     if not text:
@@ -380,6 +437,13 @@ def start_webrtc_session(
             "PyAV не установлен. Установите зависимости из requirements_web.txt"
         )
 
-    offer = RTCSessionDescription(sdp=sdp, type=offer_type)
-    options = SessionOptions(language=language, pads=pads, fps=fps)
+    try:
+        normalized_sdp = _ensure_sdp_directions(sdp)
+    except RuntimeError as err:
+        raise RuntimeError(f"Invalid WebRTC offer: {err}") from err
+    print("===== Incoming offer SDP =====")
+    print(normalized_sdp)
+    print("===== End offer SDP =====")
+    offer = RTCSessionDescription(sdp=normalized_sdp, type=offer_type)
+    options = SessionOptions(language=language, pads=pads, fps=fps, low_latency=low_latency)
     return _run_async(_create_webrtc_session(offer, text, options))

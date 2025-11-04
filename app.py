@@ -9,7 +9,31 @@ import os
 import sys
 
 # Ensure modern-lipsync modules are importable before other imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'modern-lipsync'))
+BASE_DIR = os.path.dirname(__file__)
+sys.path.insert(0, os.path.join(BASE_DIR, 'modern-lipsync'))
+
+
+def _load_env_file(path: str) -> None:
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except OSError as env_err:
+        print(f"⚠️ Не удалось прочитать .env файл ({env_err})")
+
+
+_load_env_file(os.path.join(BASE_DIR, '.env'))
 
 from app_core import create_app
 from app_core.config import DEBUG, HOST, PORT

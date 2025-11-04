@@ -257,7 +257,7 @@ class ModernLipsyncInference:
             return model.eval()
         except:
             # Fall back to regular checkpoint loading
-            if self.device == 'cuda':
+            if str(self.device).startswith('cuda'):
                 checkpoint = torch.load(checkpoint_path, weights_only=False)
             else:
                 checkpoint = torch.load(

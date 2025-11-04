@@ -12,7 +12,6 @@ torchaudio>=2.1.0
 numpy>=1.26.4
 opencv-python==4.8.1.78
 tqdm==4.66.1
-scikit-image==0.21.0
 scipy==1.11.3
 librosa==0.10.1
 numba>=0.58.1
@@ -20,3 +19,7 @@ numba>=0.58.1
 # Дополнительные утилиты
 Pillow==10.1.0
 pydub>=0.25.1  # Для разбиения аудио (параллельная обработка)
+
+# WebRTC streaming
+aiortc==1.7.0
+av==11.0.0

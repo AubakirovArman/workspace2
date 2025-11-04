@@ -19,3 +19,9 @@ def realtime():
 @pages_bp.route('/parallel_test')
 def parallel_test():
     return render_template('parallel_test.html')
+
+@pages_bp.route('/segment')
+def segment():
+    return render_template('segment.html')
+
+# Удален маршрут /mjpeg_test

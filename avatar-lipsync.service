@@ -4,10 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/workspace
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-ExecStart=/usr/bin/python3 /workspace/app.py
+User=arman
+WorkingDirectory=/home/arman/workspace2
+Environment="PATH=/home/arman/workspace2/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/arman/workspace2/.venv/bin/python /home/arman/workspace2/app.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

@@ -34,13 +34,13 @@ CHECKPOINT_PATH_NOGAN = os.getenv(
     str(BASE_DIR / "Wav2Lip-SD-NOGAN.pt")
 )
 
-SEGMENTATION_PATH_HD = str(CHECKPOINTS_DIR / "face_segmentation.pth")
-SR_PATH_HD = str(CHECKPOINTS_DIR / "esrgan_yunying.pth")
+SEGMENTATION_PATH_HD = "/home/arman/workspace2/checkpoints/face_segmentation.pth"
+SR_PATH_HD = "/home/arman/workspace2/checkpoints/esrgan_yunying.pth"
 HD_MODULES_ROOT = Path("/workspace/Wav2Lip-HD")
-REALESRGAN_PATH = str(CHECKPOINTS_DIR / "RealESRGAN_x4plus.pth")
+REALESRGAN_PATH = "/home/arman/workspace2/checkpoints/RealESRGAN_x4plus.pth"
 
-ENABLE_SEGMENTATION = _env_flag("ENABLE_SEGMENTATION", "0")
-ENABLE_SUPER_RESOLUTION = _env_flag("ENABLE_SUPER_RESOLUTION", "0")
+ENABLE_SEGMENTATION = _env_flag("ENABLE_SEGMENTATION", "1")
+ENABLE_SUPER_RESOLUTION = _env_flag("ENABLE_SUPER_RESOLUTION", "1")
 ENABLE_REALESRGAN = _env_flag("ENABLE_REALESRGAN", "0")
 
 try:
@@ -60,3 +60,14 @@ AVATAR_PREVIEW_PATH = str(TEMP_DIR_PATH / "avatar_preview.jpg")
 HOST = os.getenv("LIPSYNC_HOST", "0.0.0.0")
 PORT = int(os.getenv("LIPSYNC_PORT", "3000"))
 DEBUG = bool(int(os.getenv("LIPSYNC_DEBUG", "0")))
+
+try:
+    _gan_max_env = os.getenv("GAN_MAX_MODELS", "4")
+    MAX_GAN_MODELS = int(_gan_max_env)
+except (TypeError, ValueError):
+    MAX_GAN_MODELS = 4
+
+if MAX_GAN_MODELS < 1:
+    MAX_GAN_MODELS = 1
+elif MAX_GAN_MODELS > 8:
+    MAX_GAN_MODELS = 8

@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚙️ Сегментированное кодирование</title>
+    <style>
+        :root {
+            color-scheme: light;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #2b5876 0%, #4e4376 100%);
+            min-height: 100vh;
+            padding: 32px 16px;
+            color: #1f2933;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 18px;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.25);
+            overflow: hidden;
+        }
+        header {
+            background: linear-gradient(135deg, #5b86e5 0%, #36d1dc 100%);
+            color: #ffffff;
+            padding: 32px 40px;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 2.3rem;
+        }
+        header p {
+            margin: 12px 0 0;
+            opacity: 0.9;
+        }
+        main {
+            padding: 32px 40px 48px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 32px;
+        }
+        .card {
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 24px;
+            background: #f8fbff;
+        }
+        textarea {
+            width: 100%;
+            min-height: 180px;
+            resize: vertical;
+            border-radius: 12px;
+            border: 1px solid #cbd5e0;
+            padding: 12px 14px;
+            font-size: 14px;
+            line-height: 1.55;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        select, input[type="number"] {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid #cbd5e0;
+            font-size: 14px;
+            background: #ffffff;
+        }
+        .control-group {
+            margin-top: 18px;
+        }
+        button {
+            width: 100%;
+            padding: 14px 16px;
+            margin-top: 22px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            background: linear-gradient(135deg, #36d1dc 0%, #5b86e5 100%);
+            color: #ffffff;
+            box-shadow: 0 12px 32px rgba(91, 134, 229, 0.35);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 16px 40px rgba(91, 134, 229, 0.4);
+        }
+        button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .status-box {
+            margin-top: 18px;
+            background: #ebf8ff;
+            border: 1px solid #bee3f8;
+            border-radius: 12px;
+            padding: 16px 18px;
+            display: none;
+        }
+        .status-box.active {
+            display: block;
+        }
+        .status-box strong {
+            display: block;
+            margin-bottom: 6px;
+        }
+        video {
+            width: 100%;
+            border-radius: 14px;
+            background: #000;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-top: 18px;
+        }
+        .metric-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 16px;
+        }
+        .metric-card h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #2b6cb0;
+        }
+        .metric-value {
+            font-size: 26px;
+            font-weight: 700;
+            margin-top: 8px;
+        }
+        .metric-meta {
+            margin-top: 6px;
+            font-size: 13px;
+            color: #4a5568;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 24px;
+            background: #ffffff;
+            border-radius: 14px;
+            overflow: hidden;
+        }
+        .info-bar {
+            display: none;
+            justify-content: space-between;
+            gap: 12px;
+            background: #edf2ff;
+            border: 1px solid #c3dafe;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 13px;
+            margin-top: 16px;
+            color: #2b437c;
+            flex-wrap: wrap;
+        }
+        th, td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #edf2f7;
+            text-align: left;
+            font-size: 13px;
+        }
+        th {
+            background: #f7fafc;
+            font-weight: 700;
+            color: #2d3748;
+        }
+        tr:last-child td {
+            border-bottom: none;
+        }
+        .error {
+            margin-top: 18px;
+            background: #ffecec;
+            border: 1px solid #feb2b2;
+            color: #c53030;
+            padding: 14px 16px;
+            border-radius: 12px;
+            display: none;
+        }
+        .error.active {
+            display: block;
+        }
+        @media (max-width: 960px) {
+            main {
+                padding: 28px 24px 40px;
+            }
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            .card {
+                order: unset;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>⚙️ Сегментированное кодирование (16 потоков)</h1>
+        <p>Сценарий: Wav2Lip → 16 сегментов FFmpeg → склейка → аудио. Следите за таймингами TTS и аватара.</p>
+    </header>
+    <main>
+        <div class="grid">
+            <section class="card" id="controls">
+                <label for="text">Текст</label>
+                <textarea id="text">Добрый день! Это тест сегментированного кодирования. Мы разбиваем выход генерации на шестнадцать независимых сегментов, кодируем их параллельно и затем объединяем в итоговое видео. Так мы достигаем максимальной скорости при длинных роликах.</textarea>
+                <div class="control-group">
+                    <label for="language">Язык</label>
+                    <select id="language">
+                        <option value="ru">🇷🇺 Русский</option>
+                        <option value="kk">🇰🇿 Казахский</option>
+                        <option value="en">🇺🇸 English</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="batch">Batch size (инференс)</label>
+                    <input type="number" id="batch" value="4024" min="64" max="2048" step="32">
+                </div>
+                <button id="run">🚀 Запустить сегментированный запуск</button>
+                <div class="status-box" id="status-box">
+                    <strong>Обработка...</strong>
+                    <div id="status-details">Готовим аудио и аватар</div>
+                </div>
+                <div class="error" id="error-box"></div>
+            </section>
+            <section class="card" id="result-card" style="display:none;">
+                <video id="preview" controls></video>
+                <div class="info-bar" id="info-bar"></div>
+                <div class="metrics-grid" id="metrics"></div>
+                <table id="segments-table" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Кадры</th>
+                            <th>Запись, s</th>
+                            <th>FFmpeg, s</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </section>
+        </div>
+    </main>
+</div>
+<script>
+const runButton = document.getElementById('run');
+const statusBox = document.getElementById('status-box');
+const statusDetails = document.getElementById('status-details');
+const errorBox = document.getElementById('error-box');
+const resultCard = document.getElementById('result-card');
+const preview = document.getElementById('preview');
+const metricsGrid = document.getElementById('metrics');
+const segmentsTable = document.getElementById('segments-table');
+const segmentsTableBody = segmentsTable.querySelector('tbody');
+const infoBar = document.getElementById('info-bar');
+
+function setLoading(state, message) {
+    if (state) {
+        statusBox.classList.add('active');
+        statusDetails.textContent = message;
+        runButton.disabled = true;
+    } else {
+        statusBox.classList.remove('active');
+        runButton.disabled = false;
+    }
+}
+
+function showError(message) {
+    errorBox.textContent = message;
+    errorBox.classList.add('active');
+}
+
+function resetError() {
+    errorBox.textContent = '';
+    errorBox.classList.remove('active');
+}
+
+function renderMetrics(payload) {
+    const timings = payload.timings;
+    const totalFrames = payload.total_frames;
+    const resolution = payload.resolution;
+    const inferenceStats = payload.inference_stats || {};
+    const workers = payload.capture_workers || 1;
+    const captureChunks = payload.capture_chunks || payload.segments;
+    const encoderSegments = Array.isArray(payload.segment_results) ? payload.segment_results.length : payload.segments;
+    const avatarMode = payload.avatar_mode || 'static';
+    const requestedSegments = payload.requested_segments;
+
+    const inferenceSum = typeof inferenceStats.inference_time === 'number' ? inferenceStats.inference_time : timings.inference_time;
+    const inferenceWall = typeof timings.inference_time === 'number' ? timings.inference_time : inferenceSum;
+
+    infoBar.innerHTML = `
+        <span>Wav2Lip сервисов: <strong>${workers}</strong></span>
+        <span>Сегменты инференса: <strong>${captureChunks}</strong></span>
+        <span>FFmpeg сегменты: <strong>${encoderSegments}</strong></span>
+        <span>Запрошено: <strong>${requestedSegments && requestedSegments > 0 ? requestedSegments : 'auto'}</strong></span>
+        <span>Режим аватара: <strong>${avatarMode === 'static' ? 'статичный' : 'видео'}</strong></span>
+    `;
+    if (avatarMode === 'dynamic' && workers === 1) {
+        infoBar.innerHTML += '<span>ℹ️ Видео-аватар обрабатывается последовательно для сохранения синхронизации.</span>';
+    }
+    infoBar.style.display = 'flex';
+
+    metricsGrid.innerHTML = '';
+    const cards = [
+        {title: 'TTS', value: timings.tts_time, meta: 'Синтез речи'},
+        {title: 'Конвертация WAV', value: timings.audio_convert_time, meta: 'Преобразование в 16 kHz WAV'},
+        {title: 'Захват кадров', value: timings.capture_time, meta: 'Сбор кадров с модели'},
+    {title: 'Инференс (wall)', value: inferenceWall, meta: workers > 1 ? `Макс. сегмент · ${workers} сервис(а)` : 'Последовательный прогон'},
+    {title: 'Инференс (сумма)', value: inferenceSum, meta: workers > 1 ? 'GPU compute суммарно' : 'Совпадает с wall'},
+        {title: 'Кодирование', value: timings.encode_time, meta: 'FFmpeg × сегменты'},
+        {title: 'Склейка', value: timings.merge_time, meta: 'concat copy'},
+        {title: 'Аудио (mux)', value: timings.audio_mux_time, meta: 'AAC + faststart'},
+        {title: 'Аватар', value: timings.avatar_time, meta: 'Инференс + кодирование'},
+        {title: 'Всего', value: timings.total_time, meta: `${totalFrames} кадров · ${resolution.width}×${resolution.height}`}
+    ];
+    cards.forEach(card => {
+        if (typeof card.value !== 'number') {
+            return;
+        }
+        const div = document.createElement('div');
+        div.className = 'metric-card';
+        div.innerHTML = `
+            <h3>${card.title}</h3>
+            <div class="metric-value">${card.value.toFixed(2)}<span style="font-size:16px;"> s</span></div>
+            <div class="metric-meta">${card.meta}</div>
+        `;
+        metricsGrid.appendChild(div);
+    });
+}
+
+function renderSegments(segmentResults) {
+    if (!Array.isArray(segmentResults) || segmentResults.length === 0) {
+        segmentsTable.style.display = 'none';
+        return;
+    }
+    segmentsTableBody.innerHTML = '';
+    segmentResults.forEach(item => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${item.index + 1}</td>
+            <td>${item.frame_start} – ${item.frame_end}</td>
+            <td>${item.write_time.toFixed(2)}</td>
+            <td>${item.ffmpeg_time.toFixed(2)}</td>
+        `;
+        if (item.return_code !== 0) {
+            row.style.color = '#c53030';
+        }
+        segmentsTableBody.appendChild(row);
+    });
+    segmentsTable.style.display = '';
+}
+
+runButton.addEventListener('click', async () => {
+    resetError();
+    resultCard.style.display = 'none';
+    infoBar.style.display = 'none';
+    infoBar.innerHTML = '';
+    const text = document.getElementById('text').value.trim();
+    const language = document.getElementById('language').value;
+    const batch = Number(document.getElementById('batch').value);
+
+    if (!text) {
+        showError('Введите текст для генерации.');
+        return;
+    }
+    if (!Number.isFinite(batch) || batch < 64) {
+        showError('Batch size должен быть ≥ 64.');
+        return;
+    }
+
+    setLoading(true, 'Генерируем аудио...');
+
+    try {
+        const response = await fetch('/api/segment/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, language, batch_size: batch })
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Ошибка сервера' }));
+            throw new Error(error.error || 'Ошибка сервера');
+        }
+
+        setLoading(true, 'Кодируем сегменты...');
+        const payload = await response.json();
+
+    renderMetrics(payload);
+        renderSegments(payload.segment_results);
+
+        preview.src = `${payload.video_url}?t=${Date.now()}`;
+        preview.load();
+        preview.oncanplay = () => {
+            preview.play().catch(() => {});
+        };
+
+        resultCard.style.display = '';
+        setLoading(false);
+    } catch (err) {
+        setLoading(false);
+        showError(err.message);
+    }
+});
+</script>
+</body>
+</html>

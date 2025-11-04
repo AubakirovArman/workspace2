@@ -5,6 +5,8 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/*
+outputs/*
 env/
 ENV/
 .cache/
@@ -31,7 +33,7 @@ outputs/*.avi
 musor/
 result_lipsync.mp4
 my-audio.wav
-
+.venv/*
 # IDE
 .vscode/
 .idea/
@@ -42,6 +44,6 @@ my-audio.wav
 # OS
 .DS_Store
 Thumbs.db
-
+*.MOV
 # Jupyter
 .ipynb_checkpoints/

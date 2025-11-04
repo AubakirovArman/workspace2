@@ -1,0 +1,89 @@
+/home/arman/workspace2/.venv/lib/python3.12/site-packages/torch/backends/__init__.py:46: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  self.setter(val)
+ * Tip: There are .env or .flaskenv files present. Do "pip install python-dotenv" to use them.
+
+============================================================
+🚀 Инициализация Avatar Lipsync Service
+============================================================
+ℹ️ Real-ESRGAN отключен (ENABLE_REALESRGAN=0).
+✅ Аватар найден: /home/arman/workspace2/avatar.jpg
+✅ GAN модель найдена: /home/arman/workspace2/Wav2Lip-SD-GAN.pt
+✅ NoGAN модель найдена: /home/arman/workspace2/Wav2Lip-SD-NOGAN.pt
+🔧 Устройство: cuda
+ℹ️ Дополнительные HD модули отключены (ENABLE_* флаги = 0).
+ℹ️ Сегментация отключена (ENABLE_SEGMENTATION=0).
+ℹ️ Суперразрешение отключено (ENABLE_SUPER_RESOLUTION=0).
+🎯 Режим аватара: статичный (предкэшированное лицо)
+
+📦 Загрузка GAN модели в память...
+🚀 Starting Lipsync Service on cuda...
+Loading Wav2Lip model...
+   ✓ TorchScript checkpoint loaded
+Loading face detector...
+Loading audio processor...
+✅ Service ready! Models loaded in 0.58s
+   - Face Detector: Ready
+   - Wav2Lip Model: Ready
+   - Audio Processor: Ready
+✅ GAN модель загружена за 0.58s
+ℹ️ Предзагрузка кэша отключена - кэш будет создан при первом запросе
+
+📦 Загрузка NoGAN модели в память...
+🚀 Starting Lipsync Service on cuda...
+Loading Wav2Lip model...
+   ✓ TorchScript checkpoint loaded
+Loading face detector...
+Loading audio processor...
+✅ Service ready! Models loaded in 0.23s
+   - Face Detector: Ready
+   - Wav2Lip Model: Ready
+   - Audio Processor: Ready
+✅ NoGAN модель загружена за 0.23s
+⚡ Предобработка аватара (NoGAN) завершена за 15.52s
+
+📦 Загрузка второй GAN модели (для параллельной обработки)...
+🚀 Starting Lipsync Service on cuda...
+Loading Wav2Lip model...
+   ✓ TorchScript checkpoint loaded
+Loading face detector...
+Loading audio processor...
+✅ Service ready! Models loaded in 0.27s
+   - Face Detector: Ready
+   - Wav2Lip Model: Ready
+   - Audio Processor: Ready
+✅ GAN-2 модель загружена за 0.27s
+⚡ Предобработка аватара (GAN-2) завершена за 0.07s
+
+📦 Загрузка третьей GAN модели (для параллельной обработки)...
+🚀 Starting Lipsync Service on cuda...
+Loading Wav2Lip model...
+   ✓ TorchScript checkpoint loaded
+Loading face detector...
+Loading audio processor...
+✅ Service ready! Models loaded in 0.25s
+   - Face Detector: Ready
+   - Wav2Lip Model: Ready
+   - Audio Processor: Ready
+✅ GAN-3 модель загружена за 0.25s
+⚡ Предобработка аватара (GAN-3) завершена за 0.06s
+
+🖼️  Предзагрузка аватара...
+✅ Аватар загружен: (1483, 1290, 3)
+🖼️  Превью аватара сохранено: /home/arman/workspace2/temp_web/avatar_preview.jpg
+
+============================================================
+✅ Сервис полностью готов к работе!
+   🚀 Загружено моделей для параллельной обработки: 3x GAN + 1x NoGAN
+============================================================
+
+🌐 Запуск веб-сервера на http://0.0.0.0:3000
+📝 Откройте браузер и перейдите по адресу
+   http://0.0.0.0:3000
+
+ * Serving Flask app 'app_core.app_factory'
+ * Debug mode: off
+2025-11-01 10:57:02 [INFO] [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:3000
+ * Running on http://89.106.235.4:3000
+2025-11-01 10:57:02 [INFO] [33mPress CTRL+C to quit[0m

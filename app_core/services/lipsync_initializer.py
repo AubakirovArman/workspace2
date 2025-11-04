@@ -15,6 +15,7 @@ from ..config import (
     AVATAR_STATIC_MODE,
     CHECKPOINT_PATH_GAN,
     CHECKPOINT_PATH_NOGAN,
+    MAX_GAN_MODELS,
     ENABLE_REALESRGAN,
     ENABLE_SEGMENTATION,
     ENABLE_SUPER_RESOLUTION,
@@ -113,15 +114,39 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
         print("ℹ️ Суперразрешение отключено (ENABLE_SUPER_RESOLUTION=0).")
 
     common_kwargs = dict(
-        device=device,
         face_det_batch_size=16,
-        wav2lip_batch_size=960,
+        wav2lip_batch_size=16,
         segmentation_path=segmentation_path,
         sr_path=sr_path,
         modules_root=hd_modules_root,
         realesrgan_path=realesrgan_available,
-        realesrgan_outscale=REALESRGAN_OUTSCALE
+        realesrgan_outscale=REALESRGAN_OUTSCALE,
+        use_fp16=True,
+        use_compile=True,
     )
+
+    if device == 'cuda':
+        logical_gpu_count = torch.cuda.device_count()
+        visible_devices = [f'cuda:{idx}' for idx in range(logical_gpu_count)]
+        if not visible_devices:
+            visible_devices = ['cuda:0']
+        if len(visible_devices) > MAX_GAN_MODELS:
+            print(
+                f"ℹ️ Обнаружено {len(visible_devices)} GPU, но будет использовано только первые {MAX_GAN_MODELS} для GAN моделей."
+            )
+        target_gan_models = min(MAX_GAN_MODELS, len(visible_devices))
+        if len(visible_devices) < MAX_GAN_MODELS:
+            print(
+                f"⚠️ Найдено только {len(visible_devices)} GPU. Загружаем {target_gan_models} GAN моделей."
+            )
+        gan_devices = visible_devices[:target_gan_models]
+    else:
+        gan_devices = [device]
+
+    if not gan_devices:
+        gan_devices = [device]
+
+    print(f"🧠 Планируется загрузка {len(gan_devices)} GAN моделей на устройства: {', '.join(gan_devices)}")
 
     is_video_source = _is_video(AVATAR_IMAGE)
     use_static_cache = AVATAR_STATIC_MODE or not is_video_source
@@ -133,10 +158,12 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
     else:
         print("🎞️ Режим аватара: динамический (используется всё видео)")
 
-    print("\n📦 Загрузка GAN модели в память...")
+    primary_device = gan_devices[0]
+    print(f"\n📦 Загрузка GAN модели в память (device={primary_device})...")
     start = time.time()
     gan_service = LipsyncService(
         checkpoint_path=CHECKPOINT_PATH_GAN,
+        device=primary_device,
         **common_kwargs
     )
     model_ready_time = time.time()
@@ -160,88 +187,37 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
         print(f"⚡ Предобработка детекции (GAN) завершена за {time.time() - preload_start:.2f}s")
 
     nogan_service: Optional[LipsyncService] = None
-    if os.path.exists(CHECKPOINT_PATH_NOGAN):
-        print("\n📦 Загрузка NoGAN модели в память...")
+
+    additional_gan_services = []
+    for idx, device_name in enumerate(gan_devices[1:], start=2):
+        print(f"\n📦 Загрузка GAN модели #{idx} (device={device_name})...")
         start = time.time()
-        nogan_service = LipsyncService(
-            checkpoint_path=CHECKPOINT_PATH_NOGAN,
+        gan_extra = LipsyncService(
+            checkpoint_path=CHECKPOINT_PATH_GAN,
+            device=device_name,
             **common_kwargs
         )
         model_ready_time = time.time()
-        print(f"✅ NoGAN модель загружена за {model_ready_time - start:.2f}s")
+        print(f"✅ GAN-{idx} модель загружена за {model_ready_time - start:.2f}s")
 
         if use_static_cache:
             preload_start = time.time()
-            nogan_service.preload_static_face(
+            gan_extra.preload_static_face(
                 face_path=AVATAR_IMAGE,
                 fps=AVATAR_FPS,
                 pads=(0, 50, 0, 0)
             )
-            print(f"⚡ Предобработка аватара (NoGAN) завершена за {time.time() - preload_start:.2f}s")
+            print(f"⚡ Предобработка аватара (GAN-{idx}) завершена за {time.time() - preload_start:.2f}s")
         else:
             preload_start = time.time()
-            nogan_service.preload_video_cache(
+            gan_extra.preload_video_cache(
                 face_path=AVATAR_IMAGE,
                 fps=AVATAR_FPS,
                 pads=(0, 50, 0, 0)
             )
-            print(f"⚡ Предобработка детекции (NoGAN) завершена за {time.time() - preload_start:.2f}s")
+            print(f"⚡ Предобработка детекции (GAN-{idx}) завершена за {time.time() - preload_start:.2f}s")
 
-    # Загрузка дополнительных GAN моделей для параллельной обработки
-    gan2_service: Optional[LipsyncService] = None
-    gan3_service: Optional[LipsyncService] = None
-    
-    print("\n📦 Загрузка второй GAN модели (для параллельной обработки)...")
-    start = time.time()
-    gan2_service = LipsyncService(
-        checkpoint_path=CHECKPOINT_PATH_GAN,
-        **common_kwargs
-    )
-    model_ready_time = time.time()
-    print(f"✅ GAN-2 модель загружена за {model_ready_time - start:.2f}s")
-
-    if use_static_cache:
-        preload_start = time.time()
-        gan2_service.preload_static_face(
-            face_path=AVATAR_IMAGE,
-            fps=AVATAR_FPS,
-            pads=(0, 50, 0, 0)
-        )
-        print(f"⚡ Предобработка аватара (GAN-2) завершена за {time.time() - preload_start:.2f}s")
-    else:
-        preload_start = time.time()
-        gan2_service.preload_video_cache(
-            face_path=AVATAR_IMAGE,
-            fps=AVATAR_FPS,
-            pads=(0, 50, 0, 0)
-        )
-        print(f"⚡ Предобработка детекции (GAN-2) завершена за {time.time() - preload_start:.2f}s")
-
-    print("\n📦 Загрузка третьей GAN модели (для параллельной обработки)...")
-    start = time.time()
-    gan3_service = LipsyncService(
-        checkpoint_path=CHECKPOINT_PATH_GAN,
-        **common_kwargs
-    )
-    model_ready_time = time.time()
-    print(f"✅ GAN-3 модель загружена за {model_ready_time - start:.2f}s")
-
-    if use_static_cache:
-        preload_start = time.time()
-        gan3_service.preload_static_face(
-            face_path=AVATAR_IMAGE,
-            fps=AVATAR_FPS,
-            pads=(0, 50, 0, 0)
-        )
-        print(f"⚡ Предобработка аватара (GAN-3) завершена за {time.time() - preload_start:.2f}s")
-    else:
-        preload_start = time.time()
-        gan3_service.preload_video_cache(
-            face_path=AVATAR_IMAGE,
-            fps=AVATAR_FPS,
-            pads=(0, 50, 0, 0)
-        )
-        print(f"⚡ Предобработка детекции (GAN-3) завершена за {time.time() - preload_start:.2f}s")
+        additional_gan_services.append(gan_extra)
 
     print("\n🖼️  Предзагрузка аватара...")
     avatar_preloaded = None
@@ -274,10 +250,12 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
     except ImportError:
         print("⚠️ OpenCV не установлен. Предзагрузка аватара пропущена.")
 
+    total_gan_models = 1 + len(additional_gan_services)
+
     print("\n" + "=" * 60)
     print("✅ Сервис полностью готов к работе!")
-    print(f"   🚀 Загружено моделей для параллельной обработки: 3x GAN + 1x NoGAN")
+    print(f"   🚀 Загружено моделей для параллельной обработки: {total_gan_models}x GAN" + (" + 1x NoGAN" if nogan_service else ""))
     print("=" * 60 + "\n")
 
-    set_state(gan_service, nogan_service, avatar_preloaded, use_static_cache, gan2_service, gan3_service)
+    set_state(gan_service, nogan_service, avatar_preloaded, use_static_cache, *additional_gan_services)
     return gan_service, nogan_service, avatar_preloaded
