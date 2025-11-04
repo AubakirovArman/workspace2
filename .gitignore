@@ -47,3 +47,7 @@ Thumbs.db
 *.MOV
 # Jupyter
 .ipynb_checkpoints/
+checkpoints/pretrained.state
+checkpoints-20251029T185717Z-1-001.zip
+*.zip
+*.state
