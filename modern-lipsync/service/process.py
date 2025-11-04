@@ -85,6 +85,9 @@ class ProcessMixin:
         stats['num_mel_chunks'] = len(mel_chunks)
 
         # Ограничиваем кадры длиной аудио
+        # В dynamic mode система зациклит кадры через i % len(full_frames)
+        # Если аудио короче видео, возьмутся первые N кадров
+        # Если аудио длиннее видео, кадры зациклятся
         full_frames = full_frames[:len(mel_chunks)]
 
         # Детекция лица

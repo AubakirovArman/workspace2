@@ -94,7 +94,7 @@ def generate_avatar_speech():
             model_label = "GAN" if primary_service is state.lipsync_service_gan else "NoGAN"
             print(f"🎭 Генерация lip-sync ({model_label}, единичный поток)...")
 
-        start = time.time()
+        prepare_start = time.time()
 
         for index, svc in enumerate(service_pool, start=1):
             try:
@@ -113,6 +113,10 @@ def generate_avatar_speech():
             except Exception as preload_error:
                 suffix = f" #{index}" if len(service_pool) > 1 else ""
                 print(f"⚠️ Не удалось подготовить аватар{suffix}: {preload_error}")
+
+        prepare_time = time.time() - prepare_start
+
+        frames_start = time.time()
 
         if use_parallel:
             frames, stats, active_chunks = generate_frames_parallel(
@@ -135,6 +139,9 @@ def generate_avatar_speech():
                 batch_size=DEFAULT_BATCH_SIZE,
             )
 
+        frames_time = time.time() - frames_start
+
+        encode_start = time.time()
         encode_video_with_audio(
             frames=frames,
             output_path=output_path,
@@ -145,13 +152,20 @@ def generate_avatar_speech():
             segments=desired_segments,
         )
 
-        lipsync_time = time.time() - start
+        encode_time = time.time() - encode_start
+
+        lipsync_time = prepare_time + frames_time
+        pipeline_time = lipsync_time + encode_time
         total_time = time.time() - start_total
 
         print("\n📊 Статистика:")
         print(f"   TTS генерация:    {tts_time:.2f}s")
         print(f"   Конвертация:      {convert_time:.2f}s")
-        print(f"   Lip-sync:         {lipsync_time:.2f}s")
+        print(f"   Lip-sync (prep):  {prepare_time:.2f}s")
+        print(f"   Lip-sync (frames): {frames_time:.2f}s")
+        print(f"   Lip-sync сумма:   {lipsync_time:.2f}s")
+        print(f"   Кодирование:      {encode_time:.2f}s")
+        print(f"   Пайплайн (видео): {pipeline_time:.2f}s")
         if use_parallel:
             print(f"   Активные GPU:     {len(service_pool)}")
             print(f"   Чанки обработки:  {active_chunks}")

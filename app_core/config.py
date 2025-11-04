@@ -34,10 +34,10 @@ CHECKPOINT_PATH_NOGAN = os.getenv(
     str(BASE_DIR / "Wav2Lip-SD-NOGAN.pt")
 )
 
-SEGMENTATION_PATH_HD = "/home/arman/workspace2/checkpoints/face_segmentation.pth"
-SR_PATH_HD = "/home/arman/workspace2/checkpoints/esrgan_yunying.pth"
+SEGMENTATION_PATH_HD = "/home/arman/musetalk/avatar/checkpoints/face_segmentation.pth"
+SR_PATH_HD = "/home/arman/musetalk/avatar/checkpoints/esrgan_yunying.pth"
 HD_MODULES_ROOT = Path("/workspace/Wav2Lip-HD")
-REALESRGAN_PATH = "/home/arman/workspace2/checkpoints/RealESRGAN_x4plus.pth"
+REALESRGAN_PATH = "/home/arman/musetalk/avatar/checkpoints/RealESRGAN_x4plus.pth"
 
 ENABLE_SEGMENTATION = _env_flag("ENABLE_SEGMENTATION", "1")
 ENABLE_SUPER_RESOLUTION = _env_flag("ENABLE_SUPER_RESOLUTION", "1")

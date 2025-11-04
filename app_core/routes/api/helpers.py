@@ -200,6 +200,15 @@ def encode_video_with_audio(
         write_waveform_to_wav(temp_audio.name, audio_waveform, audio_sample_rate)
 
     segments = max(1, int(segments))
+    
+    # Debug: проверяем количество кадров
+    print(f"🔍 DEBUG encode_video_with_audio:")
+    print(f"   Кадров для кодирования: {len(frames)}")
+    print(f"   Аудио: {temp_audio.name}")
+    print(f"   FPS: {fps}")
+    print(f"   Разрешение: {width}x{height}")
+    print(f"   Сегменты: {segments}")
+    
     try:
         if segments > 1:
             _encode_multi_segment(
@@ -307,17 +316,31 @@ def _encode_single_segment(
     if proc.stdin is None:
         raise RuntimeError("FFmpeg stdin недоступен")
 
+    frames_written = 0
     try:
         for frame in frames:
             array = np.asarray(frame, dtype=np.uint8, order="C")
             proc.stdin.write(array.tobytes())
-    finally:
+            frames_written += 1
+    except BrokenPipeError:
+        # FFmpeg закрылся раньше времени — читаем stderr для диагностики
         proc.stdin.close()
+        proc.wait()
+        stderr_output = proc.stderr.read().decode("utf-8", errors="ignore") if proc.stderr else ""
+        print(f"🔍 DEBUG BrokenPipe:")
+        print(f"   Записано кадров: {frames_written}/{len(frames)}")
+        print(f"   FFmpeg stderr: {stderr_output or '(пусто)'}")
+        raise RuntimeError(f"FFmpeg closed prematurely after {frames_written}/{len(frames)} frames. stderr: {stderr_output or '(empty)'}")
+    finally:
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
 
     returncode = proc.wait()
     stderr_output = proc.stderr.read().decode("utf-8", errors="ignore") if proc.stderr else ""
     if returncode != 0:
-        raise RuntimeError(f"FFmpeg encoding failed: {stderr_output}")
+        raise RuntimeError(f"FFmpeg encoding failed (rc={returncode}): {stderr_output}")
 
 
 def _encode_multi_segment(

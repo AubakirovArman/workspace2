@@ -18,6 +18,7 @@ from . import chunk  # noqa: E402,F401
 from . import generate  # noqa: E402,F401
 from . import health  # noqa: E402,F401
 from . import legacy  # noqa: E402,F401
+from . import lipsync_video  # noqa: E402,F401
 from . import segment  # noqa: E402,F401
 from . import stream  # noqa: E402,F401
 from . import webrtc  # noqa: E402,F401

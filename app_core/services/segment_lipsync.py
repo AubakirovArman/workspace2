@@ -205,6 +205,7 @@ def run_segmented_lipsync(
             audio_sample_rate=audio_sample_rate,
             batch_size=batch_size,
             chunks=len(service_pool),
+            fps=AVATAR_FPS,
         )
     capture_time = time.perf_counter() - start_capture
 
@@ -227,10 +228,19 @@ def run_segmented_lipsync(
 
     codec_name, codec_opts = primary_service._select_ffmpeg_codec()  # type: ignore[attr-defined]
 
+    effective_fps = _resolve_effective_fps(raw_stats, total_frames, audio_duration_seconds)
+    encoded_duration = (total_frames / effective_fps) if effective_fps > 0 else 0.0
+    sync_delta = abs(encoded_duration - audio_duration_seconds)
+    if sync_delta > 0.05:  # ~3 frames @ 60fps, warns about noticeable drift
+        print(
+            f"⚠️ Предупреждение синхронизации: видео длительность {encoded_duration:.3f}s против аудио {audio_duration_seconds:.3f}s"
+        )
+    print(f"🎚️ Частота кадров для кодирования: {effective_fps:.3f} fps")
+
     start_encode = time.perf_counter()
     segment_results, total_encode_time, segment_paths = _encode_segments(
         frames,
-        AVATAR_FPS,
+        effective_fps,
         codec_name,
         codec_opts,
         segments_dir,
@@ -252,6 +262,7 @@ def run_segmented_lipsync(
         raise RuntimeError(f"Ошибка добавления аудио: {mux_stderr}")
 
     normalized_stats = {k: _normalize_stat(v) for k, v in (raw_stats or {}).items()}
+    normalized_stats["effective_fps"] = float(effective_fps)
     inference_time_wall = float(
         normalized_stats.get("inference_time_max")
         or normalized_stats.get("inference_time")
@@ -339,6 +350,26 @@ def _normalize_stat(value):
         return float(value)
     except (TypeError, ValueError):
         return value
+
+
+def _resolve_effective_fps(
+    raw_stats: Optional[Dict[str, float]],
+    total_frames: int,
+    audio_duration_seconds: float,
+) -> float:
+    if raw_stats:
+        for key in ("fps", "video_fps"):
+            candidate = raw_stats.get(key)
+            normalized = _normalize_stat(candidate)
+            if isinstance(normalized, numbers.Number) and normalized > 0:
+                return float(normalized)
+
+    if audio_duration_seconds > 0:
+        derived = total_frames / audio_duration_seconds
+        if derived > 0:
+            return float(derived)
+
+    return float(AVATAR_FPS)
 
 
 def _partition_frames(total_frames: int, segments_count: int) -> List[Tuple[int, int]]:
@@ -588,9 +619,36 @@ def _capture_frames_parallel(
     audio_sample_rate: int,
     batch_size: int,
     chunks: int,
+    fps: float,
 ) -> Tuple[List[np.ndarray], Dict[str, float], int]:
     total_samples = int(audio_waveform.shape[1])
     sample_ranges = _partition_samples(total_samples, chunks)
+
+    # Определяем целевое количество кадров для каждого чанка, чтобы убрать
+    # накопившийся дрейф синхронизации при параллельной генерации.
+    expected_total_frames = int(round((total_samples / audio_sample_rate) * fps))
+    expected_counts: List[int] = []
+    accumulated_expected = 0.0
+    assigned_so_far = 0
+    for start_sample, end_sample in sample_ranges:
+        if start_sample >= end_sample:
+            expected_counts.append(0)
+            continue
+        duration = (end_sample - start_sample) / audio_sample_rate
+        accumulated_expected += duration * fps
+        target_frames = int(round(accumulated_expected)) - assigned_so_far
+        if target_frames < 0:
+            target_frames = 0
+        expected_counts.append(target_frames)
+        assigned_so_far += target_frames
+
+    if assigned_so_far < expected_total_frames:
+        deficit = expected_total_frames - assigned_so_far
+        for index in range(len(expected_counts) - 1, -1, -1):
+            if sample_ranges[index][1] > sample_ranges[index][0]:
+                expected_counts[index] += deficit
+                assigned_so_far += deficit
+                break
 
     frames_per_chunk: List[Optional[List[np.ndarray]]] = [None] * len(sample_ranges)
     stats_per_chunk: List[Optional[Dict[str, float]]] = [None] * len(sample_ranges)
@@ -638,12 +696,33 @@ def _capture_frames_parallel(
 
     ordered_frames: List[np.ndarray] = []
     collected_stats: List[Dict[str, float]] = []
-    for chunk in frames_per_chunk:
-        if chunk:
-            ordered_frames.extend(chunk)
-    for stats in stats_per_chunk:
-        if stats:
-            collected_stats.append(stats)
+    dropped_total = 0
+
+    for index, chunk in enumerate(frames_per_chunk):
+        if not chunk:
+            continue
+        target = expected_counts[index] if index < len(expected_counts) else len(chunk)
+        if target <= 0:
+            target = 0
+            trimmed_chunk: List[np.ndarray] = []
+        elif len(chunk) > target:
+            dropped_total += len(chunk) - target
+            trimmed_chunk = chunk[:target]
+        else:
+            trimmed_chunk = chunk
+            target = len(chunk)
+        ordered_frames.extend(trimmed_chunk)
+        stats_entry = stats_per_chunk[index]
+        actual_count = len(trimmed_chunk)
+        if stats_entry is not None:
+            stats_entry['num_frames'] = actual_count
+            if len(chunk) > actual_count:
+                stats_entry['dropped_frames'] = len(chunk) - actual_count
+        if stats_entry:
+            collected_stats.append(stats_entry)
+
+    if dropped_total > 0:
+        print(f"⚙️ Коррекция синхронизации: удалено {dropped_total} лишних кадров при параллельной генерации")
 
     merged_stats = _merge_stats(collected_stats) if collected_stats else {}
     return ordered_frames, merged_stats, active_chunks
