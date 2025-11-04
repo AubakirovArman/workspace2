@@ -195,6 +195,8 @@ def run_segmented_lipsync(
             audio_waveform=audio_waveform,
             audio_sample_rate=audio_sample_rate,
             batch_size=batch_size,
+            frame_offset=0,
+            log_prefix="[single]",
         )
         active_chunks = 1
     else:
@@ -357,17 +359,34 @@ def _resolve_effective_fps(
     total_frames: int,
     audio_duration_seconds: float,
 ) -> float:
+    derived = None
+    if audio_duration_seconds > 0:
+        derived = total_frames / audio_duration_seconds if total_frames > 0 else 0.0
+
     if raw_stats:
-        for key in ("fps", "video_fps"):
+        candidate_keys = (
+            "fps_max",
+            "video_fps_max",
+            "fps",
+            "video_fps",
+        )
+        candidates: List[Tuple[str, float]] = []
+        for key in candidate_keys:
             candidate = raw_stats.get(key)
             normalized = _normalize_stat(candidate)
             if isinstance(normalized, numbers.Number) and normalized > 0:
-                return float(normalized)
+                candidates.append((key, float(normalized)))
 
-    if audio_duration_seconds > 0:
-        derived = total_frames / audio_duration_seconds
-        if derived > 0:
-            return float(derived)
+        if candidates:
+            if derived and derived > 0:
+                key, best_value = min(candidates, key=lambda item: abs(item[1] - derived))
+                if abs(best_value - derived) <= max(1.0, 0.15 * derived):
+                    return float(best_value)
+                return float(derived)
+            return float(candidates[0][1])
+
+    if derived and derived > 0:
+        return float(derived)
 
     return float(AVATAR_FPS)
 
@@ -589,13 +608,22 @@ def _capture_frames_single(
     audio_waveform,
     audio_sample_rate: int,
     batch_size: int,
+    frame_offset: int = 0,
+    log_prefix: str = "",
 ) -> Tuple[List[np.ndarray], Dict[str, float]]:
     _ensure_service_cuda_device(service)
 
     frames: List[np.ndarray] = []
 
     def _sink(frame: np.ndarray) -> None:
-        frames.append(frame.copy())
+        frames.append(frame)
+
+    total_samples = int(audio_waveform.shape[1])
+    duration = total_samples / float(audio_sample_rate)
+    prefix = f"{log_prefix} " if log_prefix else ""
+    print(
+        f"{prefix}▶️ Старт инференса: {duration:.2f}s аудио, batch={batch_size}, offset={frame_offset}"
+    )
 
     stats = service.process(
         face_path=AVATAR_IMAGE,
@@ -608,6 +636,10 @@ def _capture_frames_single(
         audio_sample_rate=audio_sample_rate,
         frame_sink=_sink,
         batch_size_override=batch_size,
+        frame_offset=frame_offset,
+    )
+    print(
+        f"{prefix}✅ Инференс завершен: {len(frames)} кадров, wall={stats.get('total_time', 0.0):.2f}s"
     )
     return frames, stats or {}
 
@@ -650,6 +682,12 @@ def _capture_frames_parallel(
                 assigned_so_far += deficit
                 break
 
+    frame_offsets: List[int] = []
+    cumulative_offset = 0
+    for count in expected_counts:
+        frame_offsets.append(cumulative_offset)
+        cumulative_offset += count
+
     frames_per_chunk: List[Optional[List[np.ndarray]]] = [None] * len(sample_ranges)
     stats_per_chunk: List[Optional[Dict[str, float]]] = [None] * len(sample_ranges)
     errors: List[Exception] = []
@@ -665,7 +703,7 @@ def _capture_frames_parallel(
         service = services[index % len(services)]
         waveform_slice = audio_waveform[:, start_sample:end_sample].contiguous()
 
-        def _worker(idx: int, svc, chunk_waveform):
+        def _worker(idx: int, svc, chunk_waveform, chunk_offset: int):
             try:
                 chunk_frames, chunk_stats = _capture_frames_single(
                     svc,
@@ -673,6 +711,8 @@ def _capture_frames_parallel(
                     audio_waveform=chunk_waveform,
                     audio_sample_rate=audio_sample_rate,
                     batch_size=batch_size,
+                    frame_offset=chunk_offset,
+                    log_prefix=f"[chunk {idx + 1}/{len(sample_ranges)}]",
                 )
                 frames_per_chunk[idx] = chunk_frames
                 stats_per_chunk[idx] = chunk_stats
@@ -682,7 +722,7 @@ def _capture_frames_parallel(
 
         thread = threading.Thread(
             target=_worker,
-            args=(index, service, waveform_slice),
+            args=(index, service, waveform_slice, frame_offsets[index] if not static_mode else 0),
             daemon=True,
         )
         threads.append(thread)

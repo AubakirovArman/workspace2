@@ -27,6 +27,7 @@ class ProcessMixin:
         audio_sample_rate: int = 16000,
         frame_sink: Optional[Callable[[np.ndarray], None]] = None,
         batch_size_override: Optional[int] = None,
+        frame_offset: int = 0,
     ) -> dict:
         """Обработка одного запроса с предзагруженными моделями."""
         stats = {}
@@ -153,6 +154,7 @@ class ProcessMixin:
             static_face_resized,
             frame_sink=frame_sink,
             batch_size_override=batch_size_override,
+            frame_offset=frame_offset,
         )
         stats['inference_time'] = time.time() - start
 

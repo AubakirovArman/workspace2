@@ -51,8 +51,11 @@ def generate_frames_single(
     frames: List = []
 
     def _sink(frame) -> None:
-        frames.append(frame.copy())
+        frames.append(frame)
 
+    samples = int(audio_waveform.shape[1])
+    duration = samples / float(audio_sample_rate)
+    print(f"[single] ▶️ Старт инференса: {duration:.2f}s аудио, batch={batch_size}")
     stats = service.process(
         face_path=AVATAR_IMAGE,
         audio_path="",
@@ -65,6 +68,7 @@ def generate_frames_single(
         frame_sink=_sink,
         batch_size_override=batch_size,
     )
+    print(f"[single] ✅ Инференс завершен: {len(frames)} кадров, wall={stats.get('total_time', 0.0):.2f}s")
     return frames, stats or {}
 
 
@@ -102,6 +106,36 @@ def generate_frames_parallel(
         sample_ranges.append((start, end))
         cursor = end
 
+    expected_total_frames = int(round((total_samples / audio_sample_rate) * AVATAR_FPS))
+    expected_counts: List[int] = []
+    accumulated_expected = 0.0
+    assigned_so_far = 0
+    for start_sample, end_sample in sample_ranges:
+        if start_sample >= end_sample:
+            expected_counts.append(0)
+            continue
+        duration = (end_sample - start_sample) / audio_sample_rate
+        accumulated_expected += duration * AVATAR_FPS
+        target_frames = int(round(accumulated_expected)) - assigned_so_far
+        if target_frames < 0:
+            target_frames = 0
+        expected_counts.append(target_frames)
+        assigned_so_far += target_frames
+
+    if assigned_so_far < expected_total_frames:
+        deficit = expected_total_frames - assigned_so_far
+        for index in range(len(expected_counts) - 1, -1, -1):
+            if sample_ranges[index][1] > sample_ranges[index][0]:
+                expected_counts[index] += deficit
+                assigned_so_far += deficit
+                break
+
+    frame_offsets: List[int] = []
+    cumulative_offset = 0
+    for count in expected_counts:
+        frame_offsets.append(cumulative_offset)
+        cumulative_offset += count
+
     frames_per_chunk = [None] * len(sample_ranges)
     stats_per_chunk = [None] * len(sample_ranges)
     errors = []
@@ -117,14 +151,20 @@ def generate_frames_parallel(
         service = service_pool[index % len(service_pool)]
         waveform_slice = audio_waveform[:, start_sample:end_sample].contiguous()
 
-        def _worker(idx: int, svc, chunk_waveform):
+        def _worker(idx: int, svc, chunk_waveform, chunk_offset: int):
             try:
                 _ensure_cuda_device(svc)
                 chunk_frames = []
 
                 def _sink(frame) -> None:
-                    chunk_frames.append(frame.copy())
+                    chunk_frames.append(frame)
 
+                chunk_samples = int(chunk_waveform.shape[1])
+                chunk_duration = chunk_samples / float(audio_sample_rate)
+                label = f"[chunk {idx + 1}/{len(sample_ranges)}]"
+                print(
+                    f"{label} ▶️ Старт инференса: {chunk_duration:.2f}s аудио, batch={batch_size}, offset={chunk_offset}"
+                )
                 chunk_stats = svc.process(
                     face_path=AVATAR_IMAGE,
                     audio_path="",
@@ -136,6 +176,10 @@ def generate_frames_parallel(
                     audio_sample_rate=audio_sample_rate,
                     frame_sink=_sink,
                     batch_size_override=batch_size,
+                    frame_offset=chunk_offset,
+                )
+                print(
+                    f"{label} ✅ Инференс завершен: {len(chunk_frames)} кадров, wall={chunk_stats.get('total_time', 0.0):.2f}s"
                 )
                 frames_per_chunk[idx] = chunk_frames
                 stats_per_chunk[idx] = chunk_stats
@@ -145,7 +189,7 @@ def generate_frames_parallel(
 
         thread = threading.Thread(
             target=_worker,
-            args=(index, service, waveform_slice),
+            args=(index, service, waveform_slice, frame_offsets[index] if not static_mode else 0),
             daemon=True,
         )
         threads.append(thread)
@@ -159,12 +203,33 @@ def generate_frames_parallel(
 
     ordered_frames = []
     collected_stats = []
-    for chunk in frames_per_chunk:
-        if chunk:
-            ordered_frames.extend(chunk)
-    for stats in stats_per_chunk:
-        if stats:
-            collected_stats.append(stats)
+    dropped_total = 0
+
+    for index, chunk in enumerate(frames_per_chunk):
+        if not chunk:
+            continue
+        target = expected_counts[index] if index < len(expected_counts) else len(chunk)
+        if target <= 0:
+            trimmed_chunk = []
+            target = 0
+        elif len(chunk) > target:
+            dropped_total += len(chunk) - target
+            trimmed_chunk = chunk[:target]
+        else:
+            trimmed_chunk = chunk
+            target = len(chunk)
+        ordered_frames.extend(trimmed_chunk)
+        stats_entry = stats_per_chunk[index]
+        actual_count = len(trimmed_chunk)
+        if stats_entry is not None:
+            stats_entry['num_frames'] = actual_count
+            if len(chunk) > actual_count:
+                stats_entry['dropped_frames'] = len(chunk) - actual_count
+        if stats_entry:
+            collected_stats.append(stats_entry)
+
+    if dropped_total > 0:
+        print(f"⚙️ Коррекция синхронизации: удалено {dropped_total} лишних кадров при параллельной генерации")
 
     merged_stats = {}
     if collected_stats:

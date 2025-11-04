@@ -61,6 +61,7 @@ HOST = os.getenv("LIPSYNC_HOST", "0.0.0.0")
 PORT = int(os.getenv("LIPSYNC_PORT", "3000"))
 DEBUG = bool(int(os.getenv("LIPSYNC_DEBUG", "0")))
 
+
 try:
     _gan_max_env = os.getenv("GAN_MAX_MODELS", "4")
     MAX_GAN_MODELS = int(_gan_max_env)
@@ -71,3 +72,14 @@ if MAX_GAN_MODELS < 1:
     MAX_GAN_MODELS = 1
 elif MAX_GAN_MODELS > 8:
     MAX_GAN_MODELS = 8
+
+try:
+    _gan_instances_env = os.getenv("GAN_MODEL_INSTANCES", "1")
+    GAN_MODEL_INSTANCES = int(_gan_instances_env)
+except (TypeError, ValueError):
+    GAN_MODEL_INSTANCES = 1
+
+if GAN_MODEL_INSTANCES < 1:
+    GAN_MODEL_INSTANCES = 1
+elif GAN_MODEL_INSTANCES > MAX_GAN_MODELS:
+    GAN_MODEL_INSTANCES = MAX_GAN_MODELS

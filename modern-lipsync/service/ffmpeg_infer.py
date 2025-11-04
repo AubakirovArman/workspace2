@@ -26,6 +26,7 @@ class FfmpegInferMixin:
         frame_sink: Optional[Callable[[np.ndarray], None]] = None,
         batch_size_override: Optional[int] = None,
         return_frames: bool = False,
+        frame_offset: int = 0,
     ) -> Optional[List[np.ndarray]]:
         """Инференс Wav2Lip и запись кадров в видео через FFmpeg."""
         if not full_frames:
@@ -43,6 +44,7 @@ class FfmpegInferMixin:
         total_chunks = len(mel_chunks)
         total_batches = (total_chunks + batch_size - 1) // batch_size
         print(f"ℹ️ Wav2Lip inference: {total_chunks} mel chunks, batch_size={batch_size}, batches={total_batches}")
+        print("   ⏳ Подготовка входных тензоров...")
 
         device = torch.device(self.device)
         use_amp = self.use_fp16 and device.type == 'cuda'
@@ -95,6 +97,9 @@ class FfmpegInferMixin:
         )
 
         precompute_time = time.time() - precompute_start
+        print(
+            f"   ✅ Тензоры готовы: frames={len(full_frames)}, faces={face_tensor.shape[0]}, mel={mel_tensor.shape[0]}"
+        )
 
         batch_prep_time = 0.0
         tensor_time = 0.0
@@ -109,7 +114,13 @@ class FfmpegInferMixin:
         frame_count = len(full_frames)
         face_count = face_tensor.shape[0]
 
-        for i in range(0, total_chunks, batch_size):
+        frame_mod = max(1, frame_count)
+        face_mod = max(1, face_count)
+        offset_base = 0 if static else int(frame_offset) % frame_mod
+
+        print(f"   ▶️ Запуск батчей: {total_batches} (max size {batch_size})")
+
+        for batch_idx, i in enumerate(range(0, total_chunks, batch_size), start=1):
             end_idx = min(i + batch_size, total_chunks)
             current_batch = end_idx - i
 
@@ -117,13 +128,18 @@ class FfmpegInferMixin:
             frame_indices: List[int] = []
             face_indices: List[int] = []
 
+            print(f"   ▶️ Батч {batch_idx}/{total_batches}: кадры {current_batch}")
+
             for offset in range(current_batch):
-                frame_idx = 0 if static else (i + offset) % max(1, frame_count)
+                frame_idx = 0 if static else (offset_base + i + offset) % frame_mod
                 frame_indices.append(frame_idx)
                 if static:
                     face_idx = 0
                 else:
-                    face_idx = frame_idx if face_count == frame_count else frame_idx % face_count
+                    if face_count == frame_count:
+                        face_idx = frame_idx
+                    else:
+                        face_idx = frame_idx % face_mod
                 face_indices.append(face_idx)
 
             frames_batch = [full_frames[idx].copy() for idx in frame_indices]
@@ -196,7 +212,7 @@ class FfmpegInferMixin:
                 self._write_frame(proc, frame)
 
                 if frame_sink is not None:
-                    frame_sink(frame.copy())
+                    frame_sink(frame)
                 if return_frames:
                     collected_frames.append(frame.copy())
                 write_time += time.time() - start_write

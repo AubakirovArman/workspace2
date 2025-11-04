@@ -16,6 +16,7 @@ from ..config import (
     CHECKPOINT_PATH_GAN,
     CHECKPOINT_PATH_NOGAN,
     MAX_GAN_MODELS,
+    GAN_MODEL_INSTANCES,
     ENABLE_REALESRGAN,
     ENABLE_SEGMENTATION,
     ENABLE_SUPER_RESOLUTION,
@@ -125,28 +126,39 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
         use_compile=True,
     )
 
+    total_instances = GAN_MODEL_INSTANCES
+    if total_instances > MAX_GAN_MODELS:
+        total_instances = MAX_GAN_MODELS
+
     if device == 'cuda':
         logical_gpu_count = torch.cuda.device_count()
         visible_devices = [f'cuda:{idx}' for idx in range(logical_gpu_count)]
         if not visible_devices:
             visible_devices = ['cuda:0']
-        if len(visible_devices) > MAX_GAN_MODELS:
+
+        if len(visible_devices) >= total_instances:
+            if len(visible_devices) > total_instances:
+                print(
+                    f"ℹ️ Будут использованы первые {total_instances} из {len(visible_devices)} доступных GPU для GAN моделей."
+                )
+            gan_devices = visible_devices[:total_instances]
+        else:
             print(
-                f"ℹ️ Обнаружено {len(visible_devices)} GPU, но будет использовано только первые {MAX_GAN_MODELS} для GAN моделей."
+                f"⚠️ Запрошено {total_instances} GAN моделей, но доступно только {len(visible_devices)} GPU. Некоторые устройства будут использованы повторно."
             )
-        target_gan_models = min(MAX_GAN_MODELS, len(visible_devices))
-        if len(visible_devices) < MAX_GAN_MODELS:
-            print(
-                f"⚠️ Найдено только {len(visible_devices)} GPU. Загружаем {target_gan_models} GAN моделей."
-            )
-        gan_devices = visible_devices[:target_gan_models]
+            gan_devices = [visible_devices[idx % len(visible_devices)] for idx in range(total_instances)]
     else:
-        gan_devices = [device]
+        gan_devices = [device] * total_instances
 
     if not gan_devices:
         gan_devices = [device]
+        total_instances = 1
 
-    print(f"🧠 Планируется загрузка {len(gan_devices)} GAN моделей на устройства: {', '.join(gan_devices)}")
+    unique_devices = sorted(set(gan_devices), key=gan_devices.index)
+    reuse_notice = " (повторное использование GPU)" if len(unique_devices) < len(gan_devices) else ""
+    print(
+        f"🧠 Планируется загрузка {len(gan_devices)} GAN моделей на устройства: {', '.join(gan_devices)}{reuse_notice}"
+    )
 
     is_video_source = _is_video(AVATAR_IMAGE)
     use_static_cache = AVATAR_STATIC_MODE or not is_video_source

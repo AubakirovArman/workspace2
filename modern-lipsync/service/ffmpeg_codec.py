@@ -9,29 +9,43 @@ from typing import Tuple, List
 class FfmpegCodecMixin:
     def _select_ffmpeg_codec(self) -> Tuple[str, List[str]]:
         """Вернуть выбранный видеокодек и его параметры для FFmpeg."""
-        codec_name = os.getenv("FFMPEG_CODEC", "libx264").lower()
+        codec_name = "libx264"
 
-        if codec_name == "libsvtav1":
-            preset = os.getenv("FFMPEG_SVT_PRESET", "9")
-            crf = os.getenv("FFMPEG_CRF", "35")
-            svt_params = os.getenv("FFMPEG_SVT_PARAMS")
-
-            codec_opts: List[str] = ['-preset', preset, '-crf', crf]
-            if svt_params:
-                codec_opts += ['-svtav1-params', svt_params]
-
-            return ('libsvtav1', codec_opts)
-
-        # Fallback: libx264
         preset = os.getenv("FFMPEG_PRESET", "ultrafast")
-        crf = os.getenv("FFMPEG_CRF", "24")
-        x264_params = os.getenv(
+        tune = os.getenv("FFMPEG_TUNE", "zerolatency")
+
+        crf = os.getenv("FFMPEG_CRF", "23")
+        maxrate = os.getenv("FFMPEG_MAXRATE", "12M")
+        bufsize = os.getenv("FFMPEG_BUFSIZE", "12M")
+
+        gop_size = os.getenv("FFMPEG_GOP", "60")
+        keyint_min = os.getenv("FFMPEG_KEYINT_MIN", gop_size)
+        scenecut = os.getenv("FFMPEG_SC_THRESHOLD", "0")
+        max_b_frames = os.getenv("FFMPEG_MAX_BFRAMES", "0")
+
+        extra_params = os.getenv(
             "FFMPEG_X264_PARAMS",
-            "sliced-threads=1:rc-lookahead=10:sync-lookahead=10:bframes=0",
+            "nal-hrd=none:rc-lookahead=0:sync-lookahead=0:b-adapt=0",
         )
 
-        codec_opts = ['-preset', preset, '-crf', crf]
-        if x264_params:
-            codec_opts += ['-x264-params', x264_params]
+        codec_opts: List[str] = [
+            '-preset', preset,
+            '-tune', tune,
+            '-crf', crf,
+            '-maxrate', maxrate,
+            '-bufsize', bufsize,
+            '-g', gop_size,
+            '-keyint_min', keyint_min,
+            '-sc_threshold', scenecut,
+            '-bf', max_b_frames,
+            '-movflags', '+faststart',
+        ]
 
-        return ('libx264', codec_opts)
+        if extra_params:
+            codec_opts += ['-x264-params', extra_params]
+
+        threads = os.getenv("FFMPEG_THREADS")
+        if threads:
+            codec_opts += ['-threads', threads]
+
+        return (codec_name, codec_opts)
