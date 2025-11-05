@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Dynamic Pipeline</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 40px 12px;
+            background: #f4f7fb;
+        }
+        .wrapper {
+            max-width: 960px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 12px 32px rgba(15, 20, 34, 0.08);
+            padding: 32px;
+        }
+        h1 {
+            margin: 0 0 16px;
+            font-size: 28px;
+            color: #1f2937;
+        }
+        p.lead {
+            margin: 0 0 32px;
+            color: #4b5563;
+        }
+        label {
+            font-weight: 600;
+            display: block;
+            margin-bottom: 8px;
+            color: #1f2937;
+        }
+        textarea {
+            width: 100%;
+            min-height: 140px;
+            padding: 14px;
+            font-size: 15px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            resize: vertical;
+            font-family: inherit;
+            transition: border-color 0.2s ease;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+        }
+        select {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #d1d5db;
+            font-size: 15px;
+            background: #fff;
+            margin-top: 6px;
+        }
+        button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            padding: 14px 28px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: background 0.2s ease, transform 0.2s ease;
+        }
+        button:hover:not(:disabled) {
+            background: #1d4ed8;
+            transform: translateY(-1px);
+        }
+        button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .status {
+            margin-top: 24px;
+            padding: 16px 18px;
+            border-radius: 10px;
+            display: none;
+            font-size: 15px;
+        }
+        .status.processing {
+            display: block;
+            color: #92400e;
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+        }
+        .status.error {
+            display: block;
+            color: #b91c1c;
+            background: #fee2e2;
+            border: 1px solid #fca5a5;
+        }
+        .status.success {
+            display: block;
+            color: #065f46;
+            background: #d1fae5;
+            border: 1px solid #6ee7b7;
+        }
+        .video-block {
+            margin-top: 32px;
+            display: none;
+            flex-direction: column;
+            gap: 16px;
+        }
+        video {
+            width: 100%;
+            max-height: 480px;
+            border-radius: 12px;
+            box-shadow: 0 6px 20px rgba(15, 23, 42, 0.18);
+            background: #000;
+        }
+        .meta {
+            font-size: 14px;
+            color: #4b5563;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        @media (max-width: 600px) {
+            .wrapper {
+                padding: 20px;
+            }
+            h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <h1>🚀 Test Dynamic Pipeline</h1>
+        <p class="lead">Введите текст любой длины. Мы сделаем TTS, прогон через оптимизированный dynamic_full_pipeline и покажем итоговое видео здесь же.</p>
+
+        <form id="testForm">
+            <label for="text">Текст:</label>
+            <textarea id="text" name="text" placeholder="Например: Добро пожаловать в тестовую страницу динамического пайплайна..." required></textarea>
+
+            <label for="language">Язык генерации:</label>
+            <select id="language" name="language">
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+                <option value="kk">Қазақша</option>
+            </select>
+
+            <button type="submit" id="submitBtn">🎬 Сгенерировать видео</button>
+        </form>
+
+        <div class="status" id="status"></div>
+
+        <div class="video-block" id="videoBlock">
+            <video id="resultVideo" controls></video>
+            <div class="meta" id="metaInfo"></div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('testForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const statusDiv = document.getElementById('status');
+        const videoBlock = document.getElementById('videoBlock');
+        const videoEl = document.getElementById('resultVideo');
+        const metaInfo = document.getElementById('metaInfo');
+        let currentBlobUrl = null;
+
+        function setStatus(type, message) {
+            statusDiv.className = 'status ' + type;
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+        }
+
+        function resetVideo() {
+            videoBlock.style.display = 'none';
+            metaInfo.textContent = '';
+            if (currentBlobUrl) {
+                URL.revokeObjectURL(currentBlobUrl);
+                currentBlobUrl = null;
+            }
+            videoEl.removeAttribute('src');
+        }
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const text = document.getElementById('text').value.trim();
+            const language = document.getElementById('language').value;
+
+            if (!text) {
+                setStatus('error', 'Введите текст для генерации');
+                return;
+            }
+
+            resetVideo();
+            setStatus('processing', '⏳ Генерация аудио и видео... пожалуйста, подождите ~15 секунд.');
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch('/api/test/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text, language })
+                });
+
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw new Error(payload.error || 'Неизвестная ошибка сервера');
+                }
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                currentBlobUrl = url;
+                videoEl.src = url;
+                videoEl.load();
+                videoBlock.style.display = 'flex';
+                setStatus('success', '✅ Видео готово! Можно просмотреть ниже.');
+
+                const fps = response.headers.get('X-Pipeline-FPS');
+                const inference = response.headers.get('X-Pipeline-Inference-Time');
+                const encode = response.headers.get('X-Pipeline-Encode-Time');
+
+                const metaParts = [];
+                if (fps) metaParts.push(`FPS: ${fps}`);
+                const inferenceValue = parseFloat(inference || '');
+                if (!Number.isNaN(inferenceValue)) metaParts.push(`Inference: ${inferenceValue.toFixed(2)}s`);
+                const encodeValue = parseFloat(encode || '');
+                if (!Number.isNaN(encodeValue)) metaParts.push(`Encoding: ${encodeValue.toFixed(2)}s`);
+                metaInfo.textContent = metaParts.join(' • ');
+            } catch (error) {
+                console.error(error);
+                setStatus('error', `❌ Ошибка: ${error.message}`);
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

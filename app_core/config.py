@@ -17,6 +17,10 @@ AVATAR_IMAGE = os.getenv(
     "AVATAR_PATH",
     str(BASE_DIR / "avatar.jpg")
 )
+AVATAR_VIDEO_PATH = os.getenv(
+    "AVATAR_VIDEO_PATH",
+    str(BASE_DIR / "IMG_3899.MOV")
+)
 AVATAR_STATIC_MODE = _env_flag("AVATAR_STATIC_MODE", "1")
 try:
     AVATAR_FPS = float(os.getenv("AVATAR_FPS", "25.0"))

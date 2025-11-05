@@ -17,6 +17,24 @@ def webrtc_start():
         text = (data.get("text") or "").strip()
         language = data.get("language", "ru")
         low_latency = bool(data.get("low_latency", False))
+        mode = (data.get("mode") or "").strip().lower()
+        dynamic_mode = mode == "dynamic" or bool(data.get("dynamic", False))
+
+        fps_value = data.get("fps", 25.0)
+        try:
+            fps = float(fps_value)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Некорректное значение fps"}), 400
+
+        batch_size = data.get("batch_size")
+        if batch_size is not None:
+            try:
+                batch_size = int(batch_size)
+                if batch_size <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                return jsonify({"error": "Некорректное значение batch_size"}), 400
+        base_video_path = data.get("base_video_path")
 
         if not sdp or not offer_type:
             return jsonify({"error": "Недействительный SDP или тип"}), 400
@@ -35,6 +53,10 @@ def webrtc_start():
             text=text,
             language=language,
             low_latency=low_latency,
+            dynamic_mode=dynamic_mode,
+            fps=fps,
+            batch_size=batch_size,
+            base_video_path=base_video_path,
         )
 
         return jsonify({"sdp": answer.sdp, "type": answer.type})

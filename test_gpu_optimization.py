@@ -71,7 +71,7 @@ def benchmark_config(checkpoint_path: str, face_path: str, audio_path: str,
                 audio_path=audio_path,
                 output_path=f'/tmp/test_output_{batch_size}_{use_fp16}_{use_compile}_{run}.mp4',
                 static=True,
-                fps=25.0
+                fps=30.0
             )
             
             if torch.cuda.is_available():

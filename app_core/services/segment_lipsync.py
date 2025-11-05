@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 import numbers
+import queue
 import subprocess
 import threading
 import time
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -146,6 +149,7 @@ def run_segmented_lipsync(
         print(f"🧠 Сегментный пайплайн использует {len(service_pool)} GAN сервисов: {device_labels}")
 
     static_mode = bool(state.avatar_static_mode or not _avatar_supports_video())
+    encode_fps = 25.0
 
     start_total = time.perf_counter()
 
@@ -174,49 +178,93 @@ def run_segmented_lipsync(
             if static_mode:
                 svc.preload_static_face(
                     face_path=AVATAR_IMAGE,
-                    fps=AVATAR_FPS,
+                    fps=encode_fps,
                     pads=FACE_PADS,
                 )
             else:
                 svc.preload_video_cache(
                     face_path=AVATAR_IMAGE,
-                    fps=AVATAR_FPS,
+                    fps=encode_fps,
                     pads=FACE_PADS,
                 )
         except Exception as preload_error:
             suffix = f" #{index}" if len(service_pool) > 1 else ""
             print(f"⚠️ Не удалось подготовить аватар для сервиса{suffix}: {preload_error}")
 
-    start_capture = time.perf_counter()
-    if len(service_pool) == 1:
-        frames, raw_stats = _capture_frames_single(
+    requested_segments = segments if segments > 0 else None
+    target_segments = segments if segments > 0 else 16
+    segments_count = max(1, target_segments)
+
+    if static_mode:
+        start_capture = time.perf_counter()
+        all_frames, primary_stats = _run_full_inference_capture(
             primary_service,
             static_mode=static_mode,
             audio_waveform=audio_waveform,
             audio_sample_rate=audio_sample_rate,
             batch_size=batch_size,
-            frame_offset=0,
-            log_prefix="[single]",
+            fps=encode_fps,
         )
-        active_chunks = 1
+        inference_phase_time = time.perf_counter() - start_capture
+
+        total_frames = len(all_frames)
+        if total_frames == 0:
+            raise RuntimeError("Не удалось получить кадры для кодирования")
+
+        _sample_ranges, expected_counts, frame_offsets = _prepare_segment_layout(
+            audio_samples, segments_count, audio_sample_rate, encode_fps
+        )
+
+        encode_start = time.perf_counter()
+        (
+            segment_results,
+            segment_paths,
+            total_encode_time,
+            active_workers,
+            segment_stats,
+        ) = _encode_segments_from_frames(
+            frames=all_frames,
+            expected_counts=expected_counts,
+            frame_offsets=frame_offsets,
+            fps=encode_fps,
+            segments_dir=segments_dir,
+        )
+        encode_phase_time = time.perf_counter() - encode_start
+        capture_time = inference_phase_time + encode_phase_time
+
+        if not segment_results:
+            raise RuntimeError("Не удалось получить сегменты для кодирования")
+
+        encoded_frames = sum(result.frame_count for result in segment_results)
+        if encoded_frames != total_frames:
+            raise RuntimeError(
+                f"Несовпадение количества кадров: инференс дал {total_frames}, кодирование вернуло {encoded_frames}"
+            )
+
+        raw_stats = dict(primary_stats or {})
     else:
-        frames, raw_stats, active_chunks = _capture_frames_parallel(
+        start_capture = time.perf_counter()
+        segment_results, raw_stats, segment_paths, active_workers, segment_stats = _process_segments_streaming(
             service_pool,
             static_mode=static_mode,
             audio_waveform=audio_waveform,
             audio_sample_rate=audio_sample_rate,
             batch_size=batch_size,
-            chunks=len(service_pool),
-            fps=AVATAR_FPS,
+            segments_count=segments_count,
+            fps=encode_fps,
+            segments_dir=segments_dir,
         )
-    capture_time = time.perf_counter() - start_capture
+        capture_time = time.perf_counter() - start_capture
 
-    total_frames = len(frames)
-    if total_frames == 0:
-        raise RuntimeError("Не удалось получить кадры для кодирования")
+        if not segment_results:
+            raise RuntimeError("Не удалось получить сегменты для кодирования")
 
-    requested_segments = segments if segments > 0 else None
-    target_segments = segments if segments > 0 else 16
+        total_frames = sum(result.frame_count for result in segment_results)
+        if total_frames == 0:
+            raise RuntimeError("Не удалось получить кадры для кодирования")
+
+        total_encode_time = sum(result.ffmpeg_time for result in segment_results)
+
     safe_segments = max(1, min(total_frames, target_segments))
 
     if requested_segments is None:
@@ -228,9 +276,7 @@ def run_segmented_lipsync(
             f"🎯 Разбиение аудио: запрос {requested_segments}, использовано {safe_segments} сегментов (кадров {total_frames})"
         )
 
-    codec_name, codec_opts = primary_service._select_ffmpeg_codec()  # type: ignore[attr-defined]
-
-    effective_fps = _resolve_effective_fps(raw_stats, total_frames, audio_duration_seconds)
+    effective_fps = encode_fps
     encoded_duration = (total_frames / effective_fps) if effective_fps > 0 else 0.0
     sync_delta = abs(encoded_duration - audio_duration_seconds)
     if sync_delta > 0.05:  # ~3 frames @ 60fps, warns about noticeable drift
@@ -238,16 +284,6 @@ def run_segmented_lipsync(
             f"⚠️ Предупреждение синхронизации: видео длительность {encoded_duration:.3f}s против аудио {audio_duration_seconds:.3f}s"
         )
     print(f"🎚️ Частота кадров для кодирования: {effective_fps:.3f} fps")
-
-    start_encode = time.perf_counter()
-    segment_results, total_encode_time, segment_paths = _encode_segments(
-        frames,
-        effective_fps,
-        codec_name,
-        codec_opts,
-        segments_dir,
-        safe_segments,
-    )
 
     merged_path = temp_root / "merged_no_audio.mp4"
     start_merge = time.perf_counter()
@@ -265,12 +301,37 @@ def run_segmented_lipsync(
 
     normalized_stats = {k: _normalize_stat(v) for k, v in (raw_stats or {}).items()}
     normalized_stats["effective_fps"] = float(effective_fps)
+    normalized_stats["segment_encode_time_total"] = float(total_encode_time)
+    normalized_stats["segment_encode_workers"] = float(active_workers or 0)
+    normalized_stats["segment_frames_encoded"] = float(total_frames)
     inference_time_wall = float(
         normalized_stats.get("inference_time_max")
         or normalized_stats.get("inference_time")
         or normalized_stats.get("process_time")
         or 0.0
     )
+
+    resolution: Optional[Tuple[int, int]] = None
+    for stats_entry in segment_stats:
+        if not stats_entry:
+            continue
+        height = int(_normalize_stat(stats_entry.get("frame_height", 0)))
+        width = int(_normalize_stat(stats_entry.get("frame_width", 0)))
+        if height > 0 and width > 0:
+            resolution = (height, width)
+            break
+
+    if (resolution is None or resolution[0] <= 0 or resolution[1] <= 0) and state.avatar_preloaded is not None:
+        height, width = state.avatar_preloaded.shape[:2]
+        resolution = (int(height), int(width))
+
+    if (resolution is None or resolution[0] <= 0 or resolution[1] <= 0) and segment_paths:
+        probed_height, probed_width = _probe_video_resolution(segment_paths[0])
+        if probed_height > 0 and probed_width > 0:
+            resolution = (probed_height, probed_width)
+
+    if resolution is None:
+        resolution = (0, 0)
 
     timings = SegmentTiming(
         tts_time=tts_time,
@@ -290,12 +351,12 @@ def run_segmented_lipsync(
         segments=safe_segments,
         requested_segments=requested_segments,
         total_frames=total_frames,
-        resolution=frames[0].shape[:2],
+        resolution=resolution,
         timings=timings,
         segment_results=segment_results,
         inference_stats=normalized_stats,
-        capture_workers=len(service_pool),
-        capture_chunks=active_chunks if len(service_pool) > 1 else 1,
+        capture_workers=active_workers or min(len(service_pool), len(segment_results)) or 1,
+        capture_chunks=len(segment_results) if segment_results else 0,
     )
     result.dump_metadata()
     return result
@@ -391,20 +452,183 @@ def _resolve_effective_fps(
     return float(AVATAR_FPS)
 
 
-def _partition_frames(total_frames: int, segments_count: int) -> List[Tuple[int, int]]:
-    segments_count = max(1, segments_count)
-    base = total_frames // segments_count
-    remainder = total_frames % segments_count
-    ranges: List[Tuple[int, int]] = []
-    cursor = 0
-    for index in range(segments_count):
-        extra = 1 if index < remainder else 0
-        start = cursor
-        end = min(total_frames, cursor + base + extra)
-        ranges.append((start, end))
-        cursor = end
-    return ranges
+def _run_full_inference_capture(
+    service,
+    static_mode: bool,
+    audio_waveform,
+    audio_sample_rate: int,
+    batch_size: int,
+    fps: float,
+):
+    captured_frames: List[np.ndarray] = []
 
+    def _collect_frame(frame):
+        captured_frames.append(frame.copy())
+
+    stats = service.process(
+        face_path=AVATAR_IMAGE,
+        audio_path="",
+        output_path=None,
+        static=static_mode,
+        fps=fps,
+        pads=FACE_PADS,
+        audio_waveform=audio_waveform,
+        audio_sample_rate=audio_sample_rate,
+        batch_size_override=batch_size,
+        frame_offset=0,
+        frame_sink=_collect_frame,
+    )
+    return captured_frames, stats
+
+
+def _encode_frames_sequence(frames_slice: List[np.ndarray], fps: float, output_path: Path):
+    if not frames_slice:
+        return 0, 0.0, ""
+
+    height, width = frames_slice[0].shape[:2]
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-s",
+        f"{width}x{height}",
+        "-r",
+        str(fps),
+        "-i",
+        "pipe:0",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "18",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+
+    encode_start = time.perf_counter()
+    proc = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        for frame in frames_slice:
+            frame_to_write = frame
+            if frame_to_write.dtype != np.uint8:
+                frame_to_write = frame_to_write.astype(np.uint8, copy=False)
+            if not frame_to_write.flags.c_contiguous:
+                frame_to_write = np.ascontiguousarray(frame_to_write)
+            if proc.stdin is not None:
+                proc.stdin.write(memoryview(frame_to_write))
+    except BrokenPipeError:
+        stderr_data = proc.stderr.read().decode("utf-8", errors="ignore") if proc.stderr else ""
+        raise RuntimeError(f"FFmpeg pipe broken during segment encode: {stderr_data}") from None
+    finally:
+        if proc.stdin is not None:
+            proc.stdin.close()
+
+    return_code = proc.wait()
+    stderr_output = proc.stderr.read().decode("utf-8", errors="ignore") if proc.stderr else ""
+    encode_time = time.perf_counter() - encode_start
+    if proc.stderr is not None:
+        proc.stderr.close()
+    return return_code, encode_time, stderr_output
+
+
+def _encode_segments_from_frames(
+    frames: List[np.ndarray],
+    expected_counts: List[int],
+    frame_offsets: List[int],
+    fps: float,
+    segments_dir: Path,
+    max_workers: Optional[int] = None,
+):
+    if not frames:
+        return [], [], 0.0, 0, []
+
+    non_empty_segments: List[Tuple[int, int, int]] = []
+    total_frames = len(frames)
+    for index, count in enumerate(expected_counts):
+        if count <= 0:
+            continue
+        start = frame_offsets[index]
+        end = min(start + count, total_frames)
+        if end <= start:
+            continue
+        non_empty_segments.append((index, start, end))
+
+    if not non_empty_segments:
+        return [], [], 0.0, 0, []
+
+    if max_workers is None or max_workers <= 0:
+        cpu_workers = os.cpu_count() or 1
+        max_workers = max(1, min(len(non_empty_segments), cpu_workers))
+
+    results: Dict[int, Tuple[SegmentEncodingResult, Path]] = {}
+    segment_paths: Dict[int, Path] = {}
+    segment_stats: Dict[int, Dict[str, float]] = {}
+    total_encode_time = 0.0
+
+    first_frame = frames[0]
+    frame_height, frame_width = first_frame.shape[:2]
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {}
+        for index, start, end in non_empty_segments:
+            output_path = segments_dir / f"segment_{index:02d}.mp4"
+            slice_frames = frames[start:end]
+            future = executor.submit(_encode_frames_sequence, slice_frames, fps, output_path)
+            future_map[future] = (index, start, end, output_path)
+
+        for future in as_completed(future_map):
+            index, start, end, output_path = future_map[future]
+            return_code, encode_time, stderr_output = future.result()
+            if return_code != 0:
+                raise RuntimeError(f"Ошибка кодирования сегмента #{index + 1}: {stderr_output}")
+            frame_count = end - start
+            frame_start = start
+            frame_end = end - 1
+            segment_result = SegmentEncodingResult(
+                index=index,
+                frame_start=frame_start,
+                frame_end=frame_end,
+                frame_count=frame_count,
+                write_time=encode_time,
+                ffmpeg_time=encode_time,
+                return_code=return_code,
+                stderr=stderr_output,
+            )
+            results[index] = (segment_result, output_path)
+            segment_paths[index] = output_path
+            segment_stats[index] = {
+                "num_frames": frame_count,
+                "frame_height": frame_height,
+                "frame_width": frame_width,
+                "encode_time": encode_time,
+            }
+            total_encode_time += encode_time
+
+    ordered_indices = sorted(results.keys())
+    segment_results_ordered: List[SegmentEncodingResult] = []
+    paths_ordered: List[Path] = []
+    stats_list: List[Dict[str, float]] = []
+    for idx in ordered_indices:
+        segment_result, path_value = results[idx]
+        segment_results_ordered.append(segment_result)
+        paths_ordered.append(path_value)
+        stats_list.append(segment_stats[idx])
+
+    return (
+        segment_results_ordered,
+        paths_ordered,
+        total_encode_time,
+        max_workers if segment_results_ordered else 0,
+        stats_list,
+    )
 
 def _partition_samples(total_samples: int, parts: int) -> List[Tuple[int, int]]:
     parts = max(1, parts)
@@ -421,125 +645,199 @@ def _partition_samples(total_samples: int, parts: int) -> List[Tuple[int, int]]:
     return ranges
 
 
-def _build_ffmpeg_command(
-    codec: str,
-    codec_opts: List[str],
-    width: int,
-    height: int,
-    fps: float,
-    output_path: Path,
-) -> List[str]:
-    dimension = f"{width}x{height}"
-    blocksize = width * height * 3
-    vf_filters: List[str] = []
-    if width % 2 != 0 or height % 2 != 0:
-        vf_filters.append("scale=w=trunc(iw/2)*2:h=trunc(ih/2)*2:flags=fast_bilinear")
-    command: List[str] = [
-        "ffmpeg",
-        "-y",
-        "-f",
-        "rawvideo",
-        "-pix_fmt",
-        "bgr24",
-        "-s",
-        dimension,
-        "-r",
-        str(fps),
-        "-blocksize",
-        str(blocksize),
-        "-i",
-        "pipe:0",
-        "-c:v",
-        codec,
-    ]
-    command += codec_opts
-    if vf_filters:
-        command += ["-vf", ",".join(vf_filters)]
-    command += [
-        "-pix_fmt",
-        "yuv420p",
-        "-an",
-        str(output_path),
-    ]
-    return command
-
-
-def _write_segment(proc: subprocess.Popen, frames: List[np.ndarray]) -> float:
-    if proc.stdin is None:
-        raise RuntimeError("FFmpeg stdin не доступен")
-    start = time.perf_counter()
-    for frame in frames:
-        array = np.asarray(frame, dtype=np.uint8, order="C")
-        if array.ndim != 3:
-            raise ValueError("Неверный формат кадра для сегментации")
-        proc.stdin.write(array.tobytes())
-    proc.stdin.close()
-    return time.perf_counter() - start
-
-
-def _encode_segments(
-    frames: List[np.ndarray],
-    fps: float,
-    codec: str,
-    codec_opts: List[str],
-    output_dir: Path,
+def _prepare_segment_layout(
+    total_samples: int,
     segments_count: int,
-) -> Tuple[List[SegmentEncodingResult], float, List[Path]]:
-    total_frames = len(frames)
-    if total_frames == 0:
-        raise RuntimeError("Нет кадров для кодирования")
+    audio_sample_rate: int,
+    fps: float,
+) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
+    sample_ranges = _partition_samples(total_samples, segments_count)
+    expected_total_frames = int(round((total_samples / audio_sample_rate) * fps))
+    expected_counts: List[int] = []
+    accumulated_expected = 0.0
+    assigned_so_far = 0
 
-    height, width = frames[0].shape[:2]
-    frame_ranges = _partition_frames(total_frames, segments_count)
-
-    results: List[SegmentEncodingResult] = []
-    segment_paths: List[Path] = []
-    threads: List[threading.Thread] = []
-    results_lock = threading.Lock()
-    start_global = time.perf_counter()
-
-    for index, (start_frame, end_frame) in enumerate(frame_ranges):
-        if start_frame >= end_frame:
+    for start_sample, end_sample in sample_ranges:
+        if start_sample >= end_sample:
+            expected_counts.append(0)
             continue
-        segment_frames = frames[start_frame:end_frame]
-        output_path = output_dir / f"segment_{index:02d}.mp4"
-        cmd = _build_ffmpeg_command(codec, codec_opts, width, height, fps, output_path)
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        duration = (end_sample - start_sample) / audio_sample_rate
+        accumulated_expected += duration * fps
+        target_frames = int(round(accumulated_expected)) - assigned_so_far
+        if target_frames < 0:
+            target_frames = 0
+        expected_counts.append(target_frames)
+        assigned_so_far += target_frames
 
-        def _worker(idx: int, base: int, chunk: List[np.ndarray], popen: subprocess.Popen) -> None:
-            write_time = _write_segment(popen, chunk)
-            wait_start = time.perf_counter()
-            return_code = popen.wait()
-            ffmpeg_time = time.perf_counter() - wait_start
-            stderr_data = popen.stderr.read().decode("utf-8", errors="ignore") if popen.stderr else ""
-            result = SegmentEncodingResult(
-                index=idx,
-                frame_start=base,
-                frame_end=base + len(chunk) - 1,
-                frame_count=len(chunk),
-                write_time=write_time,
-                ffmpeg_time=ffmpeg_time,
-                return_code=return_code,
-                stderr=stderr_data,
-            )
-            with results_lock:
-                results.append(result)
+    if assigned_so_far < expected_total_frames:
+        deficit = expected_total_frames - assigned_so_far
+        for index in range(len(expected_counts) - 1, -1, -1):
+            if sample_ranges[index][1] > sample_ranges[index][0]:
+                expected_counts[index] += deficit
+                assigned_so_far += deficit
+                break
 
+    frame_offsets: List[int] = []
+    cumulative_offset = 0
+    for count in expected_counts:
+        frame_offsets.append(cumulative_offset)
+        cumulative_offset += count
+
+    return sample_ranges, expected_counts, frame_offsets
+
+
+def _process_segments_streaming(
+    services: List,
+    static_mode: bool,
+    audio_waveform,
+    audio_sample_rate: int,
+    batch_size: int,
+    segments_count: int,
+    fps: float,
+    segments_dir: Path,
+) -> Tuple[List[SegmentEncodingResult], Dict[str, float], List[Path], int, List[Dict[str, float]]]:
+    if segments_count <= 0:
+        raise ValueError("Количество сегментов должно быть положительным")
+
+    total_samples = int(audio_waveform.shape[1])
+    sample_ranges, expected_counts, frame_offsets = _prepare_segment_layout(
+        total_samples, segments_count, audio_sample_rate, fps
+    )
+
+    jobs: queue.Queue = queue.Queue()
+    for index, sample_range in enumerate(sample_ranges):
+        jobs.put((index, sample_range, frame_offsets[index] if not static_mode else 0))
+    # Sentinels for workers
+    for _ in services:
+        jobs.put(None)
+
+    segment_infos: List[Optional[Dict[str, object]]] = [None] * len(sample_ranges)
+    segment_paths: List[Optional[Path]] = [None] * len(sample_ranges)
+    segment_stats: List[Optional[Dict[str, float]]] = [None] * len(sample_ranges)
+    errors: List[Exception] = []
+    errors_lock = threading.Lock()
+    active_workers = 0
+    active_workers_lock = threading.Lock()
+
+    def _worker(worker_id: int, service) -> None:
+        nonlocal active_workers
+        _ensure_service_cuda_device(service)
+        local_active = False
+        while True:
+            job = jobs.get()
+            if job is None:
+                jobs.task_done()
+                break
+            index, (start_sample, end_sample), frame_offset = job
+            try:
+                if start_sample >= end_sample:
+                    segment_infos[index] = {
+                        "frame_count": 0,
+                        "write_time": 0.0,
+                        "ffmpeg_time": 0.0,
+                    }
+                    segment_paths[index] = None
+                    segment_stats[index] = None
+                    continue
+
+                waveform_slice = audio_waveform[:, start_sample:end_sample].contiguous()
+                duration = (end_sample - start_sample) / float(audio_sample_rate)
+
+                log_prefix = f"[segment {index + 1}/{len(sample_ranges)}]"
+                print(
+                    f"{log_prefix} ▶️ Старт инференса: {duration:.2f}s аудио, batch={batch_size}, offset={frame_offset}"
+                )
+                output_path = segments_dir / f"segment_{index:02d}.mp4"
+                stats = service.process(
+                    face_path=AVATAR_IMAGE,
+                    audio_path="",
+                    output_path=str(output_path),
+                    static=static_mode,
+                    fps=fps,
+                    pads=FACE_PADS,
+                    audio_waveform=waveform_slice,
+                    audio_sample_rate=audio_sample_rate,
+                    batch_size_override=batch_size,
+                    frame_offset=frame_offset,
+                )
+                frame_count = int(stats.get("num_frames", 0))
+                print(
+                    f"{log_prefix} ✅ Инференс завершен: {frame_count} кадров, wall={stats.get('total_time', 0.0):.2f}s"
+                )
+
+                segment_infos[index] = {
+                    "frame_count": frame_count,
+                    "write_time": float(stats.get("writing_frames_time", 0.0)),
+                    "ffmpeg_time": float(stats.get("ffmpeg_encoding_time", 0.0)),
+                }
+                segment_paths[index] = output_path
+                segment_stats[index] = stats
+                local_active = True
+            except Exception as worker_error:
+                with errors_lock:
+                    errors.append(worker_error)
+            finally:
+                jobs.task_done()
+        if local_active:
+            with active_workers_lock:
+                active_workers += 1
+
+    threads: List[threading.Thread] = []
+    for worker_index, service in enumerate(services):
         thread = threading.Thread(
             target=_worker,
-            args=(index, start_frame, segment_frames, proc),
+            args=(worker_index, service),
             daemon=True,
         )
-        segment_paths.append(output_path)
         threads.append(thread)
         thread.start()
 
+    jobs.join()
     for thread in threads:
         thread.join()
 
-    total_encode_time = time.perf_counter() - start_global
-    results.sort(key=lambda item: item.index)
-    return results, total_encode_time, segment_paths
+    if errors:
+        raise errors[0]
+
+    segment_results: List[SegmentEncodingResult] = []
+    paths_ordered: List[Path] = []
+    stats_collected: List[Dict[str, float]] = []
+    frame_cursor = 0
+
+    for index, info in enumerate(segment_infos):
+        if info is None:
+            continue
+        frame_count = int(info.get("frame_count", 0))
+        if frame_count <= 0:
+            continue
+        frame_start = frame_cursor
+        frame_end = frame_cursor + frame_count - 1
+        frame_cursor += frame_count
+        result = SegmentEncodingResult(
+            index=index,
+            frame_start=frame_start,
+            frame_end=frame_end,
+            frame_count=frame_count,
+            write_time=float(info.get("write_time", 0.0)),
+            ffmpeg_time=float(info.get("ffmpeg_time", 0.0)),
+            return_code=0,
+            stderr="",
+        )
+        segment_results.append(result)
+        segment_path = segment_paths[index]
+        if segment_path is not None:
+            paths_ordered.append(segment_path)
+        stats_entry = segment_stats[index]
+        if stats_entry is not None:
+            stats_entry = dict(stats_entry)
+            stats_entry["num_frames"] = frame_count
+            stats_collected.append(stats_entry)
+
+    merged_stats = _merge_stats(stats_collected) if stats_collected else {}
+    if not segment_results:
+        active_workers = 0
+
+    return segment_results, merged_stats, paths_ordered, active_workers, stats_collected
 
 
 def _concat_segments(segment_paths: List[Path], output_path: Path) -> Tuple[int, str]:
@@ -602,170 +900,6 @@ def _attach_audio(video_path: Path, audio_path: Path, output_path: Path) -> Tupl
     return proc.returncode, proc.stderr
 
 
-def _capture_frames_single(
-    service,
-    static_mode: bool,
-    audio_waveform,
-    audio_sample_rate: int,
-    batch_size: int,
-    frame_offset: int = 0,
-    log_prefix: str = "",
-) -> Tuple[List[np.ndarray], Dict[str, float]]:
-    _ensure_service_cuda_device(service)
-
-    frames: List[np.ndarray] = []
-
-    def _sink(frame: np.ndarray) -> None:
-        frames.append(frame)
-
-    total_samples = int(audio_waveform.shape[1])
-    duration = total_samples / float(audio_sample_rate)
-    prefix = f"{log_prefix} " if log_prefix else ""
-    print(
-        f"{prefix}▶️ Старт инференса: {duration:.2f}s аудио, batch={batch_size}, offset={frame_offset}"
-    )
-
-    stats = service.process(
-        face_path=AVATAR_IMAGE,
-        audio_path="",
-        output_path=None,
-        static=static_mode,
-        fps=AVATAR_FPS,
-        pads=FACE_PADS,
-        audio_waveform=audio_waveform,
-        audio_sample_rate=audio_sample_rate,
-        frame_sink=_sink,
-        batch_size_override=batch_size,
-        frame_offset=frame_offset,
-    )
-    print(
-        f"{prefix}✅ Инференс завершен: {len(frames)} кадров, wall={stats.get('total_time', 0.0):.2f}s"
-    )
-    return frames, stats or {}
-
-
-def _capture_frames_parallel(
-    services: List,
-    static_mode: bool,
-    audio_waveform,
-    audio_sample_rate: int,
-    batch_size: int,
-    chunks: int,
-    fps: float,
-) -> Tuple[List[np.ndarray], Dict[str, float], int]:
-    total_samples = int(audio_waveform.shape[1])
-    sample_ranges = _partition_samples(total_samples, chunks)
-
-    # Определяем целевое количество кадров для каждого чанка, чтобы убрать
-    # накопившийся дрейф синхронизации при параллельной генерации.
-    expected_total_frames = int(round((total_samples / audio_sample_rate) * fps))
-    expected_counts: List[int] = []
-    accumulated_expected = 0.0
-    assigned_so_far = 0
-    for start_sample, end_sample in sample_ranges:
-        if start_sample >= end_sample:
-            expected_counts.append(0)
-            continue
-        duration = (end_sample - start_sample) / audio_sample_rate
-        accumulated_expected += duration * fps
-        target_frames = int(round(accumulated_expected)) - assigned_so_far
-        if target_frames < 0:
-            target_frames = 0
-        expected_counts.append(target_frames)
-        assigned_so_far += target_frames
-
-    if assigned_so_far < expected_total_frames:
-        deficit = expected_total_frames - assigned_so_far
-        for index in range(len(expected_counts) - 1, -1, -1):
-            if sample_ranges[index][1] > sample_ranges[index][0]:
-                expected_counts[index] += deficit
-                assigned_so_far += deficit
-                break
-
-    frame_offsets: List[int] = []
-    cumulative_offset = 0
-    for count in expected_counts:
-        frame_offsets.append(cumulative_offset)
-        cumulative_offset += count
-
-    frames_per_chunk: List[Optional[List[np.ndarray]]] = [None] * len(sample_ranges)
-    stats_per_chunk: List[Optional[Dict[str, float]]] = [None] * len(sample_ranges)
-    errors: List[Exception] = []
-    errors_lock = threading.Lock()
-    threads: List[threading.Thread] = []
-
-    active_chunks = 0
-
-    for index, (start_sample, end_sample) in enumerate(sample_ranges):
-        if start_sample >= end_sample:
-            continue
-        active_chunks += 1
-        service = services[index % len(services)]
-        waveform_slice = audio_waveform[:, start_sample:end_sample].contiguous()
-
-        def _worker(idx: int, svc, chunk_waveform, chunk_offset: int):
-            try:
-                chunk_frames, chunk_stats = _capture_frames_single(
-                    svc,
-                    static_mode=static_mode,
-                    audio_waveform=chunk_waveform,
-                    audio_sample_rate=audio_sample_rate,
-                    batch_size=batch_size,
-                    frame_offset=chunk_offset,
-                    log_prefix=f"[chunk {idx + 1}/{len(sample_ranges)}]",
-                )
-                frames_per_chunk[idx] = chunk_frames
-                stats_per_chunk[idx] = chunk_stats
-            except Exception as worker_error:  # pragma: no cover - runtime safeguard
-                with errors_lock:
-                    errors.append(worker_error)
-
-        thread = threading.Thread(
-            target=_worker,
-            args=(index, service, waveform_slice, frame_offsets[index] if not static_mode else 0),
-            daemon=True,
-        )
-        threads.append(thread)
-        thread.start()
-
-    for thread in threads:
-        thread.join()
-
-    if errors:
-        raise errors[0]
-
-    ordered_frames: List[np.ndarray] = []
-    collected_stats: List[Dict[str, float]] = []
-    dropped_total = 0
-
-    for index, chunk in enumerate(frames_per_chunk):
-        if not chunk:
-            continue
-        target = expected_counts[index] if index < len(expected_counts) else len(chunk)
-        if target <= 0:
-            target = 0
-            trimmed_chunk: List[np.ndarray] = []
-        elif len(chunk) > target:
-            dropped_total += len(chunk) - target
-            trimmed_chunk = chunk[:target]
-        else:
-            trimmed_chunk = chunk
-            target = len(chunk)
-        ordered_frames.extend(trimmed_chunk)
-        stats_entry = stats_per_chunk[index]
-        actual_count = len(trimmed_chunk)
-        if stats_entry is not None:
-            stats_entry['num_frames'] = actual_count
-            if len(chunk) > actual_count:
-                stats_entry['dropped_frames'] = len(chunk) - actual_count
-        if stats_entry:
-            collected_stats.append(stats_entry)
-
-    if dropped_total > 0:
-        print(f"⚙️ Коррекция синхронизации: удалено {dropped_total} лишних кадров при параллельной генерации")
-
-    merged_stats = _merge_stats(collected_stats) if collected_stats else {}
-    return ordered_frames, merged_stats, active_chunks
 
 
 def _merge_stats(stats_list: List[Dict[str, float]]) -> Dict[str, float]:
@@ -788,3 +922,25 @@ def _merge_stats(stats_list: List[Dict[str, float]]) -> Dict[str, float]:
     for key, val in numeric_max.items():
         merged[f"{key}_max"] = val
     return merged
+
+
+def _probe_video_resolution(path: Path) -> Tuple[int, int]:
+    try:
+        import cv2  # type: ignore
+    except ImportError:
+        return (0, 0)
+
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        capture.release()
+        return (0, 0)
+
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if height <= 0 or width <= 0:
+        success, frame = capture.read()
+        if success and frame is not None:
+            height, width = frame.shape[:2]
+    capture.release()
+    return (height if height > 0 else 0, width if width > 0 else 0)

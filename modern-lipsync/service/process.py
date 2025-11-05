@@ -59,7 +59,7 @@ class ProcessMixin:
             stats['load_video_time'] = 0.0
             static_face_resized = cache_entry.get('resized_face')
         elif video_cache_entry and 'frames' in video_cache_entry:
-            full_frames = [frame.copy() for frame in video_cache_entry['frames']]
+            full_frames = list(video_cache_entry['frames'])
             video_fps = video_cache_entry.get('fps', fps)
             stats['load_video_time'] = 0.0
         else:
@@ -70,8 +70,10 @@ class ProcessMixin:
             stats['load_video_time'] = time.time() - start
             if can_use_cache:
                 frames_for_cache = tuple(frame.copy() for frame in full_frames)
-        stats['num_frames'] = len(full_frames)
-        stats['fps'] = video_fps
+        if full_frames:
+            frame_h, frame_w = full_frames[0].shape[:2]
+            stats['frame_height'] = frame_h
+            stats['frame_width'] = frame_w
 
         # Аудио
         start = time.time()
@@ -90,6 +92,8 @@ class ProcessMixin:
         # Если аудио короче видео, возьмутся первые N кадров
         # Если аудио длиннее видео, кадры зациклятся
         full_frames = full_frames[:len(mel_chunks)]
+        stats['num_frames'] = len(full_frames)
+        stats['fps'] = video_fps
 
         # Детекция лица
         if cache_entry:

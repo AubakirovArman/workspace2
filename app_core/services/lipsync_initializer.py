@@ -11,6 +11,7 @@ import torch
 from ..config import (
     AVATAR_FPS,
     AVATAR_IMAGE,
+    AVATAR_VIDEO_PATH,
     AVATAR_PREVIEW_PATH,
     AVATAR_STATIC_MODE,
     CHECKPOINT_PATH_GAN,
@@ -198,6 +199,20 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
         )
         print(f"⚡ Предобработка детекции (GAN) завершена за {time.time() - preload_start:.2f}s")
 
+    if _is_video(AVATAR_VIDEO_PATH) and os.path.exists(AVATAR_VIDEO_PATH):
+        need_dynamic_preload = use_static_cache or AVATAR_VIDEO_PATH != AVATAR_IMAGE
+        if need_dynamic_preload:
+            try:
+                dynamic_start = time.time()
+                gan_service.preload_video_cache(
+                    face_path=AVATAR_VIDEO_PATH,
+                    fps=AVATAR_FPS,
+                    pads=(0, 50, 0, 0)
+                )
+                print(f"⚡ Предзагрузка динамического видео ({AVATAR_VIDEO_PATH}) завершена за {time.time() - dynamic_start:.2f}s")
+            except Exception as dynamic_error:
+                print(f"⚠️ Не удалось предзагрузить динамический аватар {AVATAR_VIDEO_PATH}: {dynamic_error}")
+
     nogan_service: Optional[LipsyncService] = None
 
     additional_gan_services = []
@@ -228,6 +243,20 @@ def init_lipsync_service() -> Tuple[LipsyncService, Optional[LipsyncService], Op
                 pads=(0, 50, 0, 0)
             )
             print(f"⚡ Предобработка детекции (GAN-{idx}) завершена за {time.time() - preload_start:.2f}s")
+
+        if _is_video(AVATAR_VIDEO_PATH) and os.path.exists(AVATAR_VIDEO_PATH):
+            need_dynamic_preload_extra = use_static_cache or AVATAR_VIDEO_PATH != AVATAR_IMAGE
+            if need_dynamic_preload_extra:
+                try:
+                    dynamic_start = time.time()
+                    gan_extra.preload_video_cache(
+                        face_path=AVATAR_VIDEO_PATH,
+                        fps=AVATAR_FPS,
+                        pads=(0, 50, 0, 0)
+                    )
+                    print(f"⚡ Предзагрузка динамического видео (GAN-{idx}) завершена за {time.time() - dynamic_start:.2f}s")
+                except Exception as dynamic_error:
+                    print(f"⚠️ Не удалось предзагрузить динамический аватар {AVATAR_VIDEO_PATH} для GAN-{idx}: {dynamic_error}")
 
         additional_gan_services.append(gan_extra)
 

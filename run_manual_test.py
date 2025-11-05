@@ -58,7 +58,7 @@ def main() -> None:
         output_path=OUTPUT_VIDEO,
         static=True,
         pads=(0, 50, 0, 0),
-        fps=25.0,
+        fps=30.0,
         audio_waveform=waveform,
         audio_sample_rate=sample_rate,
     )

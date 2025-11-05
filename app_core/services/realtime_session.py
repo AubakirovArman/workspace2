@@ -41,7 +41,7 @@ except ImportError as import_error:  # pragma: no cover - optional dependency gu
     PYAV_IMPORT_ERROR = import_error
 
 from .. import state
-from ..config import AVATAR_IMAGE, TEMP_DIR
+from ..config import AVATAR_IMAGE, AVATAR_VIDEO_PATH, TEMP_DIR
 from .tts import convert_to_wav, generate_tts
 
 
@@ -105,13 +105,19 @@ def _ensure_sdp_directions(sdp: str) -> str:
 class SessionOptions:
     language: str = "ru"
     pads: Tuple[int, int, int, int] = (0, 50, 0, 0)
-    fps: float = 25.0
+    fps: float = 30.0
     chunk_word_limit: int = 15
     chunk_stride: int = 12
     audio_sample_rate: int = 16000
     webrtc_sample_rate: int = 48000
     connection_timeout: float = 12.0
     low_latency: bool = False
+    dynamic_mode: bool = False
+    base_video_path: str = AVATAR_VIDEO_PATH
+    batch_size_override: Optional[int] = None
+
+
+DEFAULT_DYNAMIC_BATCH = 32
 
 
 class LipsyncVideoStreamTrack(VideoStreamTrack):
@@ -252,9 +258,13 @@ async def _run_stream_pipeline(
 ) -> None:
     loop = asyncio.get_running_loop()
     pads = options.pads
+    face_path = options.base_video_path if options.dynamic_mode else AVATAR_IMAGE
+    static_mode = not options.dynamic_mode
+    frame_state = {"count": 0}
 
     def frame_sink(frame: np.ndarray) -> None:
         video_track.push(frame)
+        frame_state["count"] += 1
 
     async def _wait_for_connection_ready(timeout: float) -> bool:
         start = loop.time()
@@ -272,15 +282,22 @@ async def _run_stream_pipeline(
             await asyncio.sleep(0.1)
 
     try:
-        service.preload_static_face(
-            AVATAR_IMAGE,
-            fps=options.fps,
-            pads=pads,
-            resize_factor=1,
-            crop=(0, -1, 0, -1),
-            rotate=False,
-            nosmooth=False,
-        )
+        if static_mode:
+            service.preload_static_face(
+                face_path,
+                fps=options.fps,
+                pads=pads,
+                resize_factor=1,
+                crop=(0, -1, 0, -1),
+                rotate=False,
+                nosmooth=False,
+            )
+        else:
+            service.preload_video_cache(
+                face_path=face_path,
+                fps=options.fps,
+                pads=pads,
+            )
     except Exception:
         # preload is an optimization; failures should not abort the session
         pass
@@ -311,23 +328,34 @@ async def _run_stream_pipeline(
             try:
                 audio_track.push(waveform, sample_rate)
 
+                if options.dynamic_mode:
+                    batch_override = options.batch_size_override or DEFAULT_DYNAMIC_BATCH
+                    frame_offset = frame_state["count"]
+                else:
+                    batch_override = options.batch_size_override
+                    if batch_override is None:
+                        batch_override = 32 if options.low_latency else None
+                    frame_offset = 0
+
                 def _run_process() -> None:
                     service.process(
-                        face_path=AVATAR_IMAGE,
+                        face_path=face_path,
                         audio_path="",
                         output_path=None,
-                        static=True,
+                        static=static_mode,
                         fps=options.fps,
                         pads=pads,
                         audio_waveform=waveform,
                         audio_sample_rate=sample_rate,
                         frame_sink=frame_sink,
-                        batch_size_override=32 if options.low_latency else None,
+                        batch_size_override=batch_override,
+                        frame_offset=frame_offset,
                     )
 
                 await loop.run_in_executor(None, _run_process)
             finally:
-                pass
+                if not options.dynamic_mode:
+                    frame_state["count"] = 0
 
     except Exception as exc:
         print(f"❌ Realtime pipeline error: {exc}")
@@ -423,10 +451,15 @@ def start_webrtc_session(
     pads: Tuple[int, int, int, int] = (0, 50, 0, 0),
     fps: float = 25.0,
     low_latency: bool = False,
+    dynamic_mode: bool = False,
+    base_video_path: Optional[str] = None,
+    batch_size: Optional[int] = None,
 ) -> RTCSessionDescription:
     text = text.strip()
     if not text:
         raise ValueError("Text must not be empty")
+    if fps <= 0:
+        raise ValueError("FPS must be positive")
 
     if AIORTC_IMPORT_ERROR is not None:
         raise RuntimeError(
@@ -445,5 +478,21 @@ def start_webrtc_session(
     print(normalized_sdp)
     print("===== End offer SDP =====")
     offer = RTCSessionDescription(sdp=normalized_sdp, type=offer_type)
-    options = SessionOptions(language=language, pads=pads, fps=fps, low_latency=low_latency)
+    video_path = base_video_path or AVATAR_VIDEO_PATH
+    if dynamic_mode and not os.path.exists(video_path):
+        raise FileNotFoundError(f"Видео-аватар не найден: {video_path}")
+
+    options = SessionOptions(
+        language=language,
+        pads=pads,
+        fps=fps,
+        low_latency=low_latency,
+        dynamic_mode=dynamic_mode,
+        base_video_path=video_path,
+        batch_size_override=batch_size if batch_size is not None else (DEFAULT_DYNAMIC_BATCH if dynamic_mode else None),
+    )
+    if dynamic_mode:
+        options.chunk_word_limit = max(6, min(options.chunk_word_limit, 14))
+        options.chunk_stride = max(4, min(options.chunk_stride, 12))
+
     return _run_async(_create_webrtc_session(offer, text, options))

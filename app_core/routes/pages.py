@@ -24,4 +24,9 @@ def parallel_test():
 def segment():
     return render_template('segment.html')
 
+# Новая страница тестового пайплайна
+@pages_bp.route('/test')
+def test():
+    return render_template('test.html')
+
 # Удален маршрут /mjpeg_test

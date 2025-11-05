@@ -24,12 +24,12 @@ def ffprobe(video_path: str):
         raise RuntimeError('Видео поток не найден')
 
     w, h = int(vstream.get('width', 0)), int(vstream.get('height', 0))
-    r = vstream.get('r_frame_rate', '30/1')
+    r = vstream.get('r_frame_rate', '25/1')
     try:
         num, den = map(int, r.split('/'))
-        fps = num / den if den else 30.0
+        fps = num / den if den else 25.0
     except Exception:
-        fps = 30.0
+        fps = 25.0
     return w, h, fps
 
 
