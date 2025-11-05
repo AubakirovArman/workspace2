@@ -21,7 +21,6 @@ from . import legacy  # noqa: E402,F401
 from . import lipsync_video  # noqa: E402,F401
 from . import segment  # noqa: E402,F401
 from . import stream  # noqa: E402,F401
-from . import webrtc  # noqa: E402,F401
 from . import test_page  # noqa: E402,F401
 
 __all__ = ["api_bp", "register_route"]

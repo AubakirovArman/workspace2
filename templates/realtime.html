@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Озвучка аватара 🎙️</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         * {
             margin: 0;
@@ -339,6 +340,28 @@
             border: 2px solid #f5c6cb;
         }
 
+        .download-container {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .download-container a {
+            display: inline-block;
+            padding: 10px 18px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #10b981 0%, #0ea5e9 100%);
+            color: #fff;
+            text-decoration: none;
+            font-weight: 600;
+            box-shadow: 0 10px 18px rgba(14, 165, 233, 0.25);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .download-container a:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 12px 22px rgba(14, 165, 233, 0.35);
+        }
+
         .spinner {
             display: inline-block;
             width: 20px;
@@ -462,6 +485,10 @@
 
         <div id="status" class="status"></div>
 
+        <div id="downloadContainer" class="download-container" style="display:none">
+            <a id="downloadLink" href="#" target="_blank" rel="noopener">⬇️ Скачать итоговое видео</a>
+        </div>
+
         <div class="info-box">
             <strong>ℹ️ Быстрая генерация видео:</strong>
             • Весь текст озвучивается одним клипом<br>
@@ -482,11 +509,17 @@
         const modeStaticInput = document.getElementById('mode-static');
         const modeDynamicInput = document.getElementById('mode-dynamic');
         const modeHint = document.getElementById('modeHint');
+        const downloadContainer = document.getElementById('downloadContainer');
+        const downloadLink = document.getElementById('downloadLink');
+
         let abortController = null;
         let isProcessing = false;
         let currentVideoUrl = null;
         let avatarSupportsDynamic = false;
         let currentAvatarMode = 'static';
+        let hlsInstance = null;
+        let streamStatusTimer = null;
+        let currentStreamSessionId = null;
 
         modeHint.textContent = 'Проверяем доступность режимов...';
         modeDynamicInput.disabled = true;
@@ -501,6 +534,14 @@
         }
 
         function resetPlayer() {
+            if (hlsInstance) {
+                try {
+                    hlsInstance.destroy();
+                } catch (err) {
+                    console.warn('Failed to destroy HLS instance', err);
+                }
+                hlsInstance = null;
+            }
             videoPlayer.pause();
             videoPlayer.removeAttribute('src');
             videoPlayer.srcObject = null;
@@ -514,6 +555,8 @@
                 URL.revokeObjectURL(currentVideoUrl);
                 currentVideoUrl = null;
             }
+            downloadContainer.style.display = 'none';
+            downloadLink.removeAttribute('href');
         }
 
         function setProcessing(inProgress, label = '🎙️ Создать видео') {
@@ -553,176 +596,100 @@
 
         const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-        async function fetchWebrtcResult(sessionId) {
-            const maxAttempts = 120;
-            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-                const resp = await fetch(`/api/webrtc/result/${sessionId}?t=${Date.now()}`, {
-                    cache: 'no-store',
-                });
-                if (resp.status === 200) {
-                    return resp.blob();
-                }
-                if (resp.status === 202) {
-                    await delay(1000);
-                    continue;
-                }
-                let errorMessage = `Ошибка результата WebRTC (HTTP ${resp.status})`;
-                try {
-                    const payload = await resp.json();
-                    if (payload && payload.error) {
-                        errorMessage = payload.error;
-                    }
-                } catch {
-                    /* noop */
-                }
-                throw new Error(errorMessage);
+        function stopStreamStatusPolling() {
+            if (streamStatusTimer) {
+                clearTimeout(streamStatusTimer);
+                streamStatusTimer = null;
             }
-            throw new Error('Таймаут ожидания итогового видео');
+            currentStreamSessionId = null;
         }
 
-        async function startWebRTCSession({ text, language, avatarMode }) {
-            let pc = null;
-            let unloadHandler = null;
-            let finished = false;
-            let sessionId = null;
-            const modeLabel = avatarMode === 'dynamic' ? 'динамический стрим' : 'статичный стрим';
+        function attachHlsStream(playlistUrl) {
+            const cacheBusted = `${playlistUrl}?v=${Date.now()}`;
+            ensureVideoVisible();
+            if (hlsInstance) {
+                try {
+                    hlsInstance.destroy();
+                } catch (err) {
+                    console.warn('Failed to destroy HLS instance', err);
+                }
+                hlsInstance = null;
+            }
+            if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+                hlsInstance = new Hls({
+                    lowLatencyMode: true,
+                    liveSyncDuration: 2,
+                    liveMaxLatencyDuration: 5,
+                    maxLiveSyncPlaybackRate: 1.0,
+                });
+                hlsInstance.loadSource(cacheBusted);
+                hlsInstance.attachMedia(videoPlayer);
+            } else if (videoPlayer.canPlayType('application/vnd.apple.mpegURL')) {
+                videoPlayer.src = cacheBusted;
+            } else {
+                showStatus('⚠️ Браузер не поддерживает HLS потоковое воспроизведение', 'error');
+            }
+        }
 
-            let resolveDone;
-            let rejectDone;
-            const donePromise = new Promise((resolve, reject) => {
-                resolveDone = resolve;
-                rejectDone = reject;
-            });
-
-            const cleanup = (ok, error) => {
-                if (finished) {
+        async function pollStreamStatus(sessionId) {
+            currentStreamSessionId = sessionId;
+            try {
+                const resp = await fetch(`/api/stream/status/${sessionId}?t=${Date.now()}`);
+                if (!resp.ok) {
+                    let message = `Ошибка статуса (HTTP ${resp.status})`;
+                    try {
+                        const payload = await resp.json();
+                        if (payload && payload.error) {
+                            message = payload.error;
+                        }
+                    } catch {
+                        /* ignore */
+                    }
+                    throw new Error(message);
+                }
+                const payload = await resp.json();
+                if (payload.status === 'ready') {
+                    stopStreamStatusPolling();
+                    setProcessing(false);
+                    showStatus('✅ Генерация завершена', 'success');
+                    if (payload.mp4_url) {
+                        downloadLink.href = `${payload.mp4_url}?v=${Date.now()}`;
+                        downloadContainer.style.display = 'block';
+                    }
                     return;
                 }
-                finished = true;
-                if (unloadHandler) {
-                    window.removeEventListener('beforeunload', unloadHandler);
-                    unloadHandler = null;
+                if (payload.status === 'error') {
+                    stopStreamStatusPolling();
+                    setProcessing(false);
+                    showStatus(`❌ Ошибка потока: ${payload.error || 'неизвестная ошибка'}`, 'error');
+                    return;
                 }
-                if (pc) {
-                    try {
-                        pc.close();
-                    } catch {
-                        /* ignore */
-                    }
-                    pc = null;
-                }
-                if (ok) {
-                    resolveDone();
-                } else {
-                    rejectDone(error || new Error('WebRTC session finished with error'));
-                }
-            };
-
-            try {
-                resetPlayer();
-                ensureVideoVisible();
-                setProcessing(true, '⏳ WebRTC инициализация...');
-                showStatus(`🔌 Устанавливаем WebRTC соединение (${modeLabel})...`, 'loading');
-
-                pc = new RTCPeerConnection({
-                    iceServers: [
-                        { urls: ['stun:stun.l.google.com:19302'] },
-                        { urls: ['stun:stun1.l.google.com:19302'] }
-                    ]
-                });
-
-                const remoteStream = new MediaStream();
-                videoPlayer.srcObject = remoteStream;
-                videoPlayer.muted = false;
-                videoPlayer.playsInline = true;
-                videoPlayer.controls = true;
-
-                pc.addTransceiver('video', { direction: 'recvonly' });
-                pc.addTransceiver('audio', { direction: 'recvonly' });
-
-                pc.addEventListener('track', (event) => {
-                    remoteStream.addTrack(event.track);
-                });
-
-                pc.addEventListener('connectionstatechange', () => {
-                    if (!pc) {
-                        return;
-                    }
-                    const state = pc.connectionState;
-                    console.log('WebRTC connection state:', state);
-                    if (state === 'connected') {
-                        showStatus(`✅ WebRTC соединение установлено (${modeLabel})`, 'success');
-                    } else if (state === 'closed') {
-                        showStatus(`✅ Поток завершен (${modeLabel})`, 'success');
-                        cleanup(true);
-                    } else if (state === 'failed' || state === 'disconnected') {
-                        showStatus('⚠️ Соединение прервано', 'error');
-                        cleanup(false, new Error(`WebRTC connection ${state}`));
-                    }
-                });
-
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-
-                const payload = {
-                    sdp: offer.sdp,
-                    type: offer.type,
-                    text,
-                    language,
-                    low_latency: true,
-                    mode: avatarMode,
-                };
-                if (avatarMode === 'dynamic') {
-                    payload.fps = 25.0;
-                    payload.batch_size = 32;
-                }
-
-                const resp = await fetch('/api/webrtc/start', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!resp.ok) {
-                    const payload = await resp.json().catch(() => ({}));
-                    throw new Error(payload.error || (`HTTP ${resp.status}`));
-                }
-
-                const answer = await resp.json();
-                sessionId = answer.session_id;
-                if (!sessionId) {
-                    throw new Error('Сервер не вернул идентификатор сессии');
-                }
-                const remoteDesc = new RTCSessionDescription({ type: answer.type, sdp: answer.sdp });
-                await pc.setRemoteDescription(remoteDesc);
-
-                await ensureAutoplay();
-                showStatus(`🎧 Идет потоковая озвучка через WebRTC (${modeLabel})`, 'success');
-
-                unloadHandler = () => {
-                    cleanup(false, new Error('Страница закрыта во время стрима'));
-                };
-                window.addEventListener('beforeunload', unloadHandler, { once: true });
+                streamStatusTimer = setTimeout(() => pollStreamStatus(sessionId), 1500);
             } catch (err) {
-                console.error('WebRTC start failed:', err);
-                showStatus(`❌ Ошибка WebRTC: ${err.message}`, 'error');
-                resetPlayer();
-                cleanup(false, err);
-                throw err;
+                stopStreamStatusPolling();
+                setProcessing(false);
+                showStatus(`❌ Ошибка статуса: ${err.message}`, 'error');
             }
+        }
 
-            return {
-                sessionId,
-                done: donePromise,
-                stop: async () => {
-                    cleanup(true);
-                    try {
-                        await donePromise;
-                    } catch {
-                        /* ignore */
-                    }
-                },
-            };
+        async function startStreamSession(text, language) {
+            stopStreamStatusPolling();
+            const resp = await fetch('/api/stream/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, language, mode: 'dynamic' })
+            });
+            if (!resp.ok) {
+                const payload = await resp.json().catch(() => ({}));
+                throw new Error(payload.error || `HTTP ${resp.status}`);
+            }
+            const payload = await resp.json();
+            if (!payload.session_id || !payload.playlist_url) {
+                throw new Error('Сервер не вернул данные потока');
+            }
+            attachHlsStream(payload.playlist_url);
+            pollStreamStatus(payload.session_id);
+            return payload.session_id;
         }
 
         async function fetchGeneratedVideo(text, language, controller, staticMode) {
@@ -831,6 +798,7 @@
             }
             abortController = new AbortController();
             const controller = abortController;
+            stopStreamStatusPolling();
             try {
                 if (staticMode) {
                     resetPlayer();
@@ -842,51 +810,26 @@
                     return;
                 }
 
-                let streamingHandle = null;
                 try {
-                    setProcessing(true, '⏳ Запуск потоковой озвучки...');
-                    streamingHandle = await startWebRTCSession({ text, language, avatarMode });
-                    controller.signal.addEventListener('abort', () => {
-                        if (streamingHandle) {
-                            streamingHandle.stop().catch(() => {});
-                        }
-                    }, { once: true });
-                } catch (rtcError) {
-                    console.warn('WebRTC streaming failed, falling back to offline render:', rtcError);
-                    showStatus(`⚠️ WebRTC не запустился: ${rtcError.message}. Переходим к офлайн-генерации`, 'error');
                     resetPlayer();
+                    setProcessing(true, '⏳ Запуск потоковой озвучки...');
+                    const sessionId = await startStreamSession(text, language);
+                    currentStreamSessionId = sessionId;
+                    controller.signal.addEventListener('abort', () => {
+                        stopStreamStatusPolling();
+                    }, { once: true });
+                    showStatus('🎧 Поток запущен. Видео обновляется в реальном времени.', 'success');
+                    abortController = null;
+                    return;
+                } catch (streamErr) {
+                    console.warn('Streaming failed, falling back to offline render:', streamErr);
+                    stopStreamStatusPolling();
+                    resetPlayer();
+                    showStatus(`⚠️ Поток не запущен: ${streamErr.message}. Переходим к офлайн-генерации`, 'error');
                     const videoBlob = await fetchGeneratedVideo(text, language, controller, false);
                     await playVideoBlob(videoBlob);
                     showStatus('✅ Озвучка завершена (динамический режим)', 'success');
                     return;
-                }
-
-                try {
-                    showStatus('🎧 Поток запущен. Ожидаем финализацию...', 'success');
-                    setProcessing(true, '⚙️ Финализация видео...');
-                    await streamingHandle.done;
-                    showStatus('📦 Финализируем итоговое видео...', 'loading');
-                    if (streamingHandle) {
-                        await streamingHandle.stop();
-                    }
-                    resetPlayer();
-                    const videoBlob = await fetchWebrtcResult(streamingHandle.sessionId);
-                    await playVideoBlob(videoBlob);
-                    showStatus('✅ Озвучка завершена (динамический режим)', 'success');
-                } catch (streamErr) {
-                    console.error('Streaming interrupted, falling back to offline render', streamErr);
-                    showStatus(`⚠️ Поток прерван: ${streamErr.message}. Запускаю офлайн-рендер...`, 'error');
-                    if (streamingHandle) {
-                        try {
-                            await streamingHandle.stop();
-                        } catch {
-                            /* ignore */
-                        }
-                    }
-                    resetPlayer();
-                    const videoBlob = await fetchGeneratedVideo(text, language, controller, false);
-                    await playVideoBlob(videoBlob);
-                    showStatus('✅ Озвучка завершена (динамический режим)', 'success');
                 }
             } catch (err) {
                 if (err.name === 'AbortError') {
@@ -922,6 +865,7 @@
         window.addEventListener('beforeunload', () => {
             abortController?.abort();
             resetPlayer();
+            stopStreamStatusPolling();
         });
 
         fetch('/api/health')
