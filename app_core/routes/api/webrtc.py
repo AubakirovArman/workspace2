@@ -1,10 +1,10 @@
 """WebRTC signalling endpoint."""
 from __future__ import annotations
 
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 
 from ... import state
-from ...services import start_webrtc_session
+from ...services import start_webrtc_session, get_stream_session
 from . import api_bp, register_route
 
 
@@ -47,7 +47,7 @@ def webrtc_start():
         if service is None:
             return jsonify({"error": "Модель lipsync не загружена"}), 503
 
-        answer = start_webrtc_session(
+        answer, session_id = start_webrtc_session(
             sdp=sdp,
             offer_type=offer_type,
             text=text,
@@ -59,7 +59,7 @@ def webrtc_start():
             base_video_path=base_video_path,
         )
 
-        return jsonify({"sdp": answer.sdp, "type": answer.type})
+        return jsonify({"sdp": answer.sdp, "type": answer.type, "session_id": session_id})
     except Exception as exc:
         print(f"\n❌ WebRTC error: {exc}")
         import traceback
@@ -69,3 +69,23 @@ def webrtc_start():
 
 
 register_route("/r/api/webrtc/start", webrtc_start, methods=["POST"])
+
+
+@api_bp.route("/api/webrtc/result/<session_id>", methods=["GET"])
+def webrtc_result(session_id: str):
+    session = get_stream_session(session_id)
+    if session is None:
+        return jsonify({"error": "Сессия не найдена"}), 404
+    if session.error:
+        return jsonify({"error": session.error}), 500
+    if not session.result_ready or not session.output_video_path.exists():
+        return jsonify({"status": "processing"}), 202
+    return send_file(
+        str(session.output_video_path),
+        mimetype="video/mp4",
+        as_attachment=False,
+        conditional=False,
+    )
+
+
+register_route("/r/api/webrtc/result/<session_id>", webrtc_result, methods=["GET"])

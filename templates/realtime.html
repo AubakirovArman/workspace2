@@ -551,120 +551,178 @@
             return selected ? selected.value : 'static';
         }
 
-        async function startWebRTCSession({ text, language, avatarMode }) {
-            return new Promise(async (resolve, reject) => {
-                let pc = null;
-                let unloadHandler = null;
-                let finished = false;
-                const modeLabel = avatarMode === 'dynamic' ? 'динамический стрим' : 'статичный стрим';
+        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-                const cleanup = (result, error) => {
-                    if (finished) {
+        async function fetchWebrtcResult(sessionId) {
+            const maxAttempts = 120;
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+                const resp = await fetch(`/api/webrtc/result/${sessionId}?t=${Date.now()}`, {
+                    cache: 'no-store',
+                });
+                if (resp.status === 200) {
+                    return resp.blob();
+                }
+                if (resp.status === 202) {
+                    await delay(1000);
+                    continue;
+                }
+                let errorMessage = `Ошибка результата WebRTC (HTTP ${resp.status})`;
+                try {
+                    const payload = await resp.json();
+                    if (payload && payload.error) {
+                        errorMessage = payload.error;
+                    }
+                } catch {
+                    /* noop */
+                }
+                throw new Error(errorMessage);
+            }
+            throw new Error('Таймаут ожидания итогового видео');
+        }
+
+        async function startWebRTCSession({ text, language, avatarMode }) {
+            let pc = null;
+            let unloadHandler = null;
+            let finished = false;
+            let sessionId = null;
+            const modeLabel = avatarMode === 'dynamic' ? 'динамический стрим' : 'статичный стрим';
+
+            let resolveDone;
+            let rejectDone;
+            const donePromise = new Promise((resolve, reject) => {
+                resolveDone = resolve;
+                rejectDone = reject;
+            });
+
+            const cleanup = (ok, error) => {
+                if (finished) {
+                    return;
+                }
+                finished = true;
+                if (unloadHandler) {
+                    window.removeEventListener('beforeunload', unloadHandler);
+                    unloadHandler = null;
+                }
+                if (pc) {
+                    try {
+                        pc.close();
+                    } catch {
+                        /* ignore */
+                    }
+                    pc = null;
+                }
+                if (ok) {
+                    resolveDone();
+                } else {
+                    rejectDone(error || new Error('WebRTC session finished with error'));
+                }
+            };
+
+            try {
+                resetPlayer();
+                ensureVideoVisible();
+                setProcessing(true, '⏳ WebRTC инициализация...');
+                showStatus(`🔌 Устанавливаем WebRTC соединение (${modeLabel})...`, 'loading');
+
+                pc = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: ['stun:stun.l.google.com:19302'] },
+                        { urls: ['stun:stun1.l.google.com:19302'] }
+                    ]
+                });
+
+                const remoteStream = new MediaStream();
+                videoPlayer.srcObject = remoteStream;
+                videoPlayer.muted = false;
+                videoPlayer.playsInline = true;
+                videoPlayer.controls = true;
+
+                pc.addTransceiver('video', { direction: 'recvonly' });
+                pc.addTransceiver('audio', { direction: 'recvonly' });
+
+                pc.addEventListener('track', (event) => {
+                    remoteStream.addTrack(event.track);
+                });
+
+                pc.addEventListener('connectionstatechange', () => {
+                    if (!pc) {
                         return;
                     }
-                    finished = true;
-                    if (unloadHandler) {
-                        window.removeEventListener('beforeunload', unloadHandler);
+                    const state = pc.connectionState;
+                    console.log('WebRTC connection state:', state);
+                    if (state === 'connected') {
+                        showStatus(`✅ WebRTC соединение установлено (${modeLabel})`, 'success');
+                    } else if (state === 'closed') {
+                        showStatus(`✅ Поток завершен (${modeLabel})`, 'success');
+                        cleanup(true);
+                    } else if (state === 'failed' || state === 'disconnected') {
+                        showStatus('⚠️ Соединение прервано', 'error');
+                        cleanup(false, new Error(`WebRTC connection ${state}`));
                     }
-                    if (pc) {
-                        try {
-                            pc.close();
-                        } catch {
-                            /* ignore */
-                        }
-                    }
-                    if (result) {
-                        resolve(result);
-                    } else {
-                        reject(error || new Error('WebRTC session finished with error'));
-                    }
+                });
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                const payload = {
+                    sdp: offer.sdp,
+                    type: offer.type,
+                    text,
+                    language,
+                    low_latency: true,
+                    mode: avatarMode,
                 };
-
-                try {
-                    resetPlayer();
-                    ensureVideoVisible();
-                    setProcessing(true, '⏳ WebRTC инициализация...');
-                    showStatus(`🔌 Устанавливаем WebRTC соединение (${modeLabel})...`, 'loading');
-
-                    pc = new RTCPeerConnection({
-                        iceServers: [
-                            { urls: ['stun:stun.l.google.com:19302'] },
-                            { urls: ['stun:stun1.l.google.com:19302'] }
-                        ]
-                    });
-
-                    const remoteStream = new MediaStream();
-                    videoPlayer.srcObject = remoteStream;
-                    videoPlayer.muted = false;
-                    videoPlayer.playsInline = true;
-                    videoPlayer.controls = true;
-
-                    pc.addTransceiver('video', { direction: 'recvonly' });
-                    pc.addTransceiver('audio', { direction: 'recvonly' });
-
-                    pc.addEventListener('track', (event) => {
-                        remoteStream.addTrack(event.track);
-                    });
-
-                    pc.addEventListener('connectionstatechange', () => {
-                        const state = pc.connectionState;
-                        console.log('WebRTC connection state:', state);
-                        if (state === 'connected') {
-                            showStatus(`✅ WebRTC соединение установлено (${modeLabel})`, 'success');
-                        } else if (state === 'closed') {
-                            showStatus(`✅ Поток завершен (${modeLabel})`, 'success');
-                            cleanup(true);
-                        } else if (state === 'failed' || state === 'disconnected') {
-                            showStatus('⚠️ Соединение прервано', 'error');
-                            cleanup(false, new Error(`WebRTC connection ${state}`));
-                        }
-                    });
-
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-
-                    const payload = {
-                        sdp: offer.sdp,
-                        type: offer.type,
-                        text,
-                        language,
-                        low_latency: true,
-                        mode: avatarMode,
-                    };
-                    if (avatarMode === 'dynamic') {
-                        payload.fps = 25.0;
-                        payload.batch_size = 32;
-                    }
-
-                    const resp = await fetch('/api/webrtc/start', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!resp.ok) {
-                        const payload = await resp.json().catch(() => ({}));
-                        throw new Error(payload.error || (`HTTP ${resp.status}`));
-                    }
-
-                    const answer = await resp.json();
-                    const remoteDesc = new RTCSessionDescription({ type: answer.type, sdp: answer.sdp });
-                    await pc.setRemoteDescription(remoteDesc);
-
-                    await ensureAutoplay();
-                    showStatus(`🎧 Идет потоковая озвучка через WebRTC (${modeLabel})`, 'success');
-
-                    unloadHandler = () => {
-                        cleanup(false, new Error('Страница закрыта во время стрима'));
-                    };
-                    window.addEventListener('beforeunload', unloadHandler, { once: true });
-                } catch (err) {
-                    console.error('WebRTC start failed:', err);
-                    showStatus(`❌ Ошибка WebRTC: ${err.message}`, 'error');
-                    resetPlayer();
-                    cleanup(false, err);
+                if (avatarMode === 'dynamic') {
+                    payload.fps = 25.0;
+                    payload.batch_size = 32;
                 }
-            });
+
+                const resp = await fetch('/api/webrtc/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!resp.ok) {
+                    const payload = await resp.json().catch(() => ({}));
+                    throw new Error(payload.error || (`HTTP ${resp.status}`));
+                }
+
+                const answer = await resp.json();
+                sessionId = answer.session_id;
+                if (!sessionId) {
+                    throw new Error('Сервер не вернул идентификатор сессии');
+                }
+                const remoteDesc = new RTCSessionDescription({ type: answer.type, sdp: answer.sdp });
+                await pc.setRemoteDescription(remoteDesc);
+
+                await ensureAutoplay();
+                showStatus(`🎧 Идет потоковая озвучка через WebRTC (${modeLabel})`, 'success');
+
+                unloadHandler = () => {
+                    cleanup(false, new Error('Страница закрыта во время стрима'));
+                };
+                window.addEventListener('beforeunload', unloadHandler, { once: true });
+            } catch (err) {
+                console.error('WebRTC start failed:', err);
+                showStatus(`❌ Ошибка WebRTC: ${err.message}`, 'error');
+                resetPlayer();
+                cleanup(false, err);
+                throw err;
+            }
+
+            return {
+                sessionId,
+                done: donePromise,
+                stop: async () => {
+                    cleanup(true);
+                    try {
+                        await donePromise;
+                    } catch {
+                        /* ignore */
+                    }
+                },
+            };
         }
 
         async function fetchGeneratedVideo(text, language, controller, staticMode) {
@@ -773,38 +831,63 @@
             }
             abortController = new AbortController();
             const controller = abortController;
-
             try {
-                resetPlayer();
-
-                if (!staticMode) {
-                    try {
-                        setProcessing(true, '⏳ Запуск потоковой озвучки...');
-                        await startWebRTCSession({ text, language, avatarMode });
-                        showStatus('🎞️ Поток завершен, формируем итоговое видео...', 'loading');
-                    } catch (rtcError) {
-                        console.warn('WebRTC streaming failed, falling back to offline render:', rtcError);
-                        showStatus(`⚠️ WebRTC не запустился: ${rtcError.message}. Переходим к офлайн-генерации`, 'error');
-                    } finally {
-                        resetPlayer();
-                    }
+                if (staticMode) {
+                    resetPlayer();
+                    setProcessing(true, '⏳ Генерация...');
+                    showStatus('🔄 Генерируем статичный видеоклип...', 'loading');
+                    const videoBlob = await fetchGeneratedVideo(text, language, controller, true);
+                    await playVideoBlob(videoBlob);
+                    showStatus('✅ Озвучка завершена (статичный режим)', 'success');
+                    return;
                 }
 
-                setProcessing(true, staticMode ? '⏳ Генерация...' : '⏳ Генерируем итоговое видео...');
-                showStatus(
-                    staticMode
-                        ? '🔄 Генерируем статичный видеоклип...'
-                        : '🎥 Собираем итоговый ролик на основе динамического видео...',
-                    'loading'
-                );
+                let streamingHandle = null;
+                try {
+                    setProcessing(true, '⏳ Запуск потоковой озвучки...');
+                    streamingHandle = await startWebRTCSession({ text, language, avatarMode });
+                    controller.signal.addEventListener('abort', () => {
+                        if (streamingHandle) {
+                            streamingHandle.stop().catch(() => {});
+                        }
+                    }, { once: true });
+                } catch (rtcError) {
+                    console.warn('WebRTC streaming failed, falling back to offline render:', rtcError);
+                    showStatus(`⚠️ WebRTC не запустился: ${rtcError.message}. Переходим к офлайн-генерации`, 'error');
+                    resetPlayer();
+                    const videoBlob = await fetchGeneratedVideo(text, language, controller, false);
+                    await playVideoBlob(videoBlob);
+                    showStatus('✅ Озвучка завершена (динамический режим)', 'success');
+                    return;
+                }
 
-                const videoBlob = await fetchGeneratedVideo(text, language, controller, staticMode);
-                showStatus('🎥 Получаем видео...', 'loading');
-                await playVideoBlob(videoBlob);
-                const completionMessage = currentAvatarMode === 'dynamic'
-                    ? '✅ Озвучка завершена (динамический режим)'
-                    : '✅ Озвучка завершена (статичный режим)';
-                showStatus(completionMessage, 'success');
+                try {
+                    showStatus('🎧 Поток запущен. Ожидаем финализацию...', 'success');
+                    setProcessing(true, '⚙️ Финализация видео...');
+                    await streamingHandle.done;
+                    showStatus('📦 Финализируем итоговое видео...', 'loading');
+                    if (streamingHandle) {
+                        await streamingHandle.stop();
+                    }
+                    resetPlayer();
+                    const videoBlob = await fetchWebrtcResult(streamingHandle.sessionId);
+                    await playVideoBlob(videoBlob);
+                    showStatus('✅ Озвучка завершена (динамический режим)', 'success');
+                } catch (streamErr) {
+                    console.error('Streaming interrupted, falling back to offline render', streamErr);
+                    showStatus(`⚠️ Поток прерван: ${streamErr.message}. Запускаю офлайн-рендер...`, 'error');
+                    if (streamingHandle) {
+                        try {
+                            await streamingHandle.stop();
+                        } catch {
+                            /* ignore */
+                        }
+                    }
+                    resetPlayer();
+                    const videoBlob = await fetchGeneratedVideo(text, language, controller, false);
+                    await playVideoBlob(videoBlob);
+                    showStatus('✅ Озвучка завершена (динамический режим)', 'success');
+                }
             } catch (err) {
                 if (err.name === 'AbortError') {
                     showStatus('⏹️ Генерация остановлена', 'error');
