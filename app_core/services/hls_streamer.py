@@ -22,9 +22,9 @@ BASE_STREAM_DIR = Path(TEMP_DIR) / "hls"
 BASE_STREAM_DIR.mkdir(parents=True, exist_ok=True)
 
 PADS = (0, 50, 0, 0)
-DEFAULT_BATCH_SIZE = 32
+DEFAULT_BATCH_SIZE = 8
 
-ENCODER_THREADS = 8
+ENCODER_THREADS = 16
 SEGMENT_DURATION = 1.0  # seconds
 SEGMENT_LIST_SIZE = 6
 HLS_FLAGS = "independent_segments+append_list+omit_endlist+delete_segments"
@@ -67,7 +67,7 @@ class HLSStreamEncoder:
         self.crf = crf
         self.preset = preset
 
-        self._queue: "queue.Queue[Optional[np.ndarray]]" = queue.Queue(maxsize=256)
+        self._queue: "queue.Queue[Optional[np.ndarray]]" = queue.Queue(maxsize=128)
         self._writer_thread = threading.Thread(target=self._write_loop, daemon=True)
         self._proc: Optional[subprocess.Popen] = None
         self._width: Optional[int] = None
