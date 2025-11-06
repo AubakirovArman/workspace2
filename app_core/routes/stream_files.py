@@ -21,6 +21,5 @@ def serve_stream_file(session_id: str, filename: str):
         session_dir,
         filename,
         conditional=True,
-        cache_timeout=0,
+        max_age=0,
     )
-

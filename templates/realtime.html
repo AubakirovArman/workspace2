@@ -615,16 +615,65 @@
                 }
                 hlsInstance = null;
             }
+
+            videoPlayer.pause();
+            videoPlayer.removeAttribute('src');
+            videoPlayer.load();
+
+            let playbackRequested = false;
+            const requestPlayback = () => {
+                if (playbackRequested) {
+                    return;
+                }
+                playbackRequested = true;
+                ensureAutoplay()
+                    .then(() => {
+                        playbackRequested = false;
+                    })
+                    .catch((err) => {
+                        playbackRequested = false;
+                        console.warn('Failed to start playback', err);
+                        showStatus('⚠️ Не удалось запустить воспроизведение', 'error');
+                    });
+            };
+
             if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+                const levelEmptyDetail = (Hls.ErrorDetails && Hls.ErrorDetails.LEVEL_EMPTY_ERROR) || 'levelEmptyError';
                 hlsInstance = new Hls({
                     lowLatencyMode: true,
-                    liveSyncDuration: 2,
-                    liveMaxLatencyDuration: 5,
+                    liveSyncDuration: 3,
+                    liveMaxLatencyDuration: 20,
                     maxLiveSyncPlaybackRate: 1.0,
+                });
+                hlsInstance.on(Hls.Events.FRAG_BUFFERED, () => {
+                    requestPlayback();
+                });
+                hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+                    if (data && data.details === levelEmptyDetail) {
+                        console.warn('HLS playlist still empty, retrying load');
+                        setTimeout(() => {
+                            try {
+                                hlsInstance.startLoad();
+                            } catch (err) {
+                                console.warn('Failed to restart HLS load', err);
+                            }
+                        }, 500);
+                        return;
+                    }
+                    if (data && data.fatal) {
+                        showStatus(`❌ Поток прерван: ${data.details || 'неизвестная ошибка'}`, 'error');
+                    }
                 });
                 hlsInstance.loadSource(cacheBusted);
                 hlsInstance.attachMedia(videoPlayer);
             } else if (videoPlayer.canPlayType('application/vnd.apple.mpegURL')) {
+                const onCanPlay = () => {
+                    videoPlayer.removeEventListener('loadedmetadata', onCanPlay);
+                    videoPlayer.removeEventListener('canplay', onCanPlay);
+                    requestPlayback();
+                };
+                videoPlayer.addEventListener('loadedmetadata', onCanPlay);
+                videoPlayer.addEventListener('canplay', onCanPlay);
                 videoPlayer.src = cacheBusted;
             } else {
                 showStatus('⚠️ Браузер не поддерживает HLS потоковое воспроизведение', 'error');
