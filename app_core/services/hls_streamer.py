@@ -22,12 +22,26 @@ BASE_STREAM_DIR = Path(TEMP_DIR) / "hls"
 BASE_STREAM_DIR.mkdir(parents=True, exist_ok=True)
 
 PADS = (0, 50, 0, 0)
-DEFAULT_BATCH_SIZE = 8
+DEFAULT_BATCH_SIZE = 2
 
 ENCODER_THREADS = 16
 SEGMENT_DURATION = 1.0  # seconds
 SEGMENT_LIST_SIZE = 6
 HLS_FLAGS = "independent_segments+append_list+omit_endlist+delete_segments"
+
+
+def _finalize_playlist(playlist_path: Path) -> None:
+    """Append EXT-X-ENDLIST so clients stop polling after completion."""
+    try:
+        if not playlist_path.exists():
+            return
+        content = playlist_path.read_text(encoding="utf-8")
+        if "#EXT-X-ENDLIST" in content:
+            return
+        with playlist_path.open("a", encoding="utf-8") as handle:
+            handle.write("#EXT-X-ENDLIST\n")
+    except Exception as err:
+        print(f"⚠️ Не удалось завершить HLS плейлист ({err})")
 
 
 def _coerce_value(value: Any) -> Any:
@@ -373,6 +387,7 @@ def _run_stream_job(job: StreamJob, text: str, language: str) -> None:
         finally:
             _update_job(job, status="finalizing")
             encoder.finish()
+        _finalize_playlist(job.playlist_path)
         encode_error = encoder.error
         if encode_error:
             raise RuntimeError(encode_error)

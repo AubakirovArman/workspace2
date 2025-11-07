@@ -230,7 +230,7 @@
                 </div>
                 <div class="control-group">
                     <label for="batch">Batch size (инференс)</label>
-                    <input type="number" id="batch" value="4024" min="64" max="2048" step="32">
+                    <input type="number" id="batch" value="1024" min="64" max="2048" step="32">
                 </div>
                 <button id="run">🚀 Запустить сегментированный запуск</button>
                 <div class="status-box" id="status-box">
@@ -382,6 +382,10 @@ runButton.addEventListener('click', async () => {
     }
     if (!Number.isFinite(batch) || batch < 64) {
         showError('Batch size должен быть ≥ 64.');
+        return;
+    }
+    if (batch > 2048) {
+        showError('Batch size должен быть ≤ 2048.');
         return;
     }
 

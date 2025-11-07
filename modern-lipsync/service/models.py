@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,21 @@ from utils.audio import ModernAudioProcessor
 
 class ModelsMixin:
     """Загрузка основных и дополнительных моделей."""
+
+    def _ensure_functional_tensor_stub(self) -> None:
+        """Provide compatibility shim for older basicsr imports."""
+        target_name = 'torchvision.transforms.functional_tensor'
+        if target_name in sys.modules:
+            return
+        try:
+            from torchvision.transforms import functional as _F
+        except Exception:
+            return
+
+        module = types.ModuleType(target_name)
+        if hasattr(_F, 'rgb_to_grayscale'):
+            module.rgb_to_grayscale = _F.rgb_to_grayscale  # type: ignore[attr-defined]
+        sys.modules[target_name] = module
 
     def _ensure_modules_root(self):
         if getattr(self, "_modules_root", None) and not getattr(self, "_sys_path_added", False):
@@ -79,6 +95,7 @@ class ModelsMixin:
         self._load_optional_modules()
 
     def _load_optional_modules(self):
+        self._ensure_functional_tensor_stub()
         real_sr_loaded = False
         is_cuda = getattr(self, "is_cuda", str(self.device).startswith('cuda'))
         segmentation_path = getattr(self, "_segmentation_path", None)
@@ -141,8 +158,11 @@ class ModelsMixin:
                 print("   ⚠️ Super-resolution requires CUDA; skipping")
             else:
                 self._ensure_modules_root()
+                self._ensure_functional_tensor_stub()
                 try:
-                    from basicsr.apply_sr import init_sr_model, enhance
+                    from basicsr.apply_sr import init_sr_model, enhance  # type: ignore
+                except ImportError:
+                    from .sr_compat import init_sr_model, enhance
                     print("Loading super-resolution model (ESRGAN)...")
                     self.sr_model = init_sr_model(sr_path)
                     self._sr_enhance_fn = enhance

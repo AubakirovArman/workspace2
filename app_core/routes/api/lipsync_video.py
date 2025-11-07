@@ -1,4 +1,4 @@
-"""Lip-sync на фиксированном видео IMG_3899.MOV (потоковая обработка без склейки)."""
+"""Lip-sync на фиксированном видео IMG_3584.MOV (потоковая обработка без склейки)."""
 from __future__ import annotations
 
 import os
@@ -19,8 +19,7 @@ BASE_VIDEO_PATH = '/home/arman/musetalk/avatar/IMG_3899.MOV'
 
 @api_bp.route('/api/lipsync/video', methods=['GET', 'POST'])
 def lipsync_video():
-    """Lip-sync на фиксированном видео IMG_3899.MOV.
-    
+    """
     GET: возвращает HTML-форму для ввода текста.
     POST: принимает text + language → TTS → lip-sync на видео-основе.
     
@@ -56,7 +55,7 @@ def lipsync_video():
         preset = data.get('preset', 'veryfast')
         
         print("\n" + "=" * 60)
-        print("🎬 Lip-sync на видео IMG_3899.MOV")
+        print("🎬 Lip-sync на видео IMG_3584.MOV")
         print("=" * 60)
         print(f"Текст: {text}")
         print(f"Язык: {language}")
