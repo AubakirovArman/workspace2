@@ -132,7 +132,7 @@ def read_video_frames(video_path: Path) -> Tuple[List[np.ndarray], float]:
 def detect_faces(
     frames: Sequence[np.ndarray],
     detector: face_detection.FaceAlignment,
-    pads: Tuple[int, int, int, int] = (0, 50, 0, 0),
+    pads: Tuple[int, int, int, int] = (0, 40, 0, 0),
     smooth: bool = True,
 ) -> List[DetectionResult]:
     """Run batched face detection with optional smoothing."""

@@ -19,7 +19,7 @@ AVATAR_IMAGE = os.getenv(
 )
 AVATAR_VIDEO_PATH = os.getenv(
     "AVATAR_VIDEO_PATH",
-    str(BASE_DIR / "IMG_3899.MOV")
+    str(BASE_DIR / "IMG_38991.MOV")
 )
 AVATAR_STATIC_MODE = _env_flag("AVATAR_STATIC_MODE", "1")
 try:
@@ -38,10 +38,22 @@ CHECKPOINT_PATH_NOGAN = os.getenv(
     str(BASE_DIR / "Wav2Lip-SD-NOGAN.pt")
 )
 
-SEGMENTATION_PATH_HD = "/home/arman/musetalk/avatar/checkpoints/face_segmentation.pth"
-SR_PATH_HD = "/home/arman/musetalk/avatar/checkpoints/esrgan_yunying.pth"
-HD_MODULES_ROOT = Path("/workspace/Wav2Lip-HD")
-REALESRGAN_PATH = "/home/arman/musetalk/avatar/checkpoints/RealESRGAN_x4plus.pth"
+SEGMENTATION_PATH_HD = os.getenv(
+    "SEGMENTATION_PATH_HD",
+    "/home/arman/musetalk/avatar/checkpoints/face_segmentation.pth",
+)
+SR_PATH_HD = os.getenv(
+    "SR_PATH_HD",
+    "/home/arman/musetalk/avatar/checkpoints/esrgan_yunying.pth",
+)
+HD_MODULES_ROOT = Path(os.getenv(
+    "HD_MODULES_ROOT",
+    "/home/arman/musetalk/avatar/Wav2Lip-HD",
+))
+REALESRGAN_PATH = os.getenv(
+    "REALESRGAN_PATH",
+    "/home/arman/musetalk/avatar/checkpoints/RealESRGAN_x4plus.pth",
+)
 
 ENABLE_SEGMENTATION = _env_flag("ENABLE_SEGMENTATION", "1")
 ENABLE_SUPER_RESOLUTION = _env_flag("ENABLE_SUPER_RESOLUTION", "1")

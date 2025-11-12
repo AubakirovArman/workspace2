@@ -5,10 +5,10 @@ After=network.target
 [Service]
 Type=simple
 User=arman
-WorkingDirectory=/home/arman/workspace2
-Environment="PATH=/home/arman/workspace2/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+WorkingDirectory=/home/arman/musetalk/avatar
+Environment="PATH=/home/arman/musetalk/avatar/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/arman/workspace2/.venv/bin/python /home/arman/workspace2/app.py
+ExecStart=/home/arman/musetalk/avatar/venv/bin/python /home/arman/musetalk/avatar/app.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

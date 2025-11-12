@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 from typing import List, Tuple, Optional, Callable
+from functools import lru_cache
 import os
 import numpy as np
 import cv2
 import torch
 import time
+
+
+FEATHER_MARGIN_PX = 18
+
+
+@lru_cache(maxsize=256)
+def _build_feather_mask(width: int, height: int, margin: int) -> np.ndarray:
+    if margin <= 0 or width <= 0 or height <= 0:
+        return np.ones((height, width), dtype=np.float32)
+
+    pad_x = min(margin, width // 2)
+    pad_y = min(margin, height // 2)
+    if pad_x == 0 or pad_y == 0 or width <= 2 * pad_x or height <= 2 * pad_y:
+        return np.ones((height, width), dtype=np.float32)
+
+    mask = np.zeros((height, width), dtype=np.float32)
+    mask[pad_y:height - pad_y, pad_x:width - pad_x] = 1.0
+    sigma = margin / 2.0
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=sigma, sigmaY=sigma)
+    np.clip(mask, 0.0, 1.0, out=mask)
+    return mask
 
 
 class FfmpegInferMixin:
@@ -169,7 +191,7 @@ class FfmpegInferMixin:
             for predicted_patch, frame, coords in zip(pred, frames_batch, coords_batch):
                 start_paste = time.time()
                 y1, y2, x1, x2 = coords
-                face_crop = frame[y1:y2, x1:x2]
+                face_crop = frame[y1:y2, x1:x2].copy()
                 frame_patch = predicted_patch.astype(np.uint8)
 
                 if self.realesrgan_enabled and self._realesrgan_enhancer is not None:
@@ -204,6 +226,14 @@ class FfmpegInferMixin:
                         self.segmentation_enabled = False
                         self.segmentation_model = None
                         self._swap_regions_fn = None
+
+                if not (self.segmentation_enabled and self.segmentation_model is not None and self._swap_regions_fn):
+                    feather_mask = _build_feather_mask(x2 - x1, y2 - y1, FEATHER_MARGIN_PX)
+                    alpha = feather_mask[..., None]
+                    frame_patch = (
+                        alpha * frame_patch.astype(np.float32)
+                        + (1.0 - alpha) * face_crop.astype(np.float32)
+                    ).astype(np.uint8)
 
                 frame[y1:y2, x1:x2] = frame_patch
                 paste_time += time.time() - start_paste

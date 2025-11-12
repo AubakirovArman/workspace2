@@ -112,7 +112,8 @@ class ProcessMixin:
                 stats['face_detection_time'] = 0.0
             else:
                 video_cache_entry = None
-        else:
+
+        if 'face_det_results' not in locals():
             start = time.time()
             if box[0] == -1:
                 if not static:

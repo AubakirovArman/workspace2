@@ -26,9 +26,8 @@ DEFAULT_BATCH_SIZE = 2
 
 ENCODER_THREADS = 16
 SEGMENT_DURATION = 1.0  # seconds
-SEGMENT_LIST_SIZE = 6
-HLS_FLAGS = "independent_segments+append_list+omit_endlist+delete_segments"
-
+SEGMENT_LIST_SIZE = 0
+HLS_FLAGS = "independent_segments+append_list"
 
 def _finalize_playlist(playlist_path: Path) -> None:
     """Append EXT-X-ENDLIST so clients stop polling after completion."""
@@ -68,7 +67,7 @@ class HLSStreamEncoder:
         audio_path: Path,
         playlist_path: Path,
         segment_template: Path,
-        mp4_path: Path,
+        mp4_path: Path, 
         fps: float,
         crf: int = 20,
         preset: str = "veryfast",

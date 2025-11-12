@@ -113,7 +113,7 @@ def build_service(args: argparse.Namespace) -> tuple[LipsyncService, Dict[str, A
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Dump inference frames for dynamic avatar experiments.")
-    parser.add_argument("--avatar", default="/home/arman/musetalk/avatar/IMG_3899.MOV", help="Path to the avatar video source.")
+    parser.add_argument("--avatar", default="/home/arman/musetalk/avatar/IMG_38991.MOV", help="Path to the avatar video source.")
     parser.add_argument("--audio", default="/home/arman/musetalk/avatar/audio_20251030_145910.wav", help="Path to the source audio file.")
     parser.add_argument("--checkpoint", default=config.CHECKPOINT_PATH_GAN, help="Path to the Wav2Lip checkpoint.")
     parser.add_argument("--device", default="cuda:0", help="Torch device for inference.")

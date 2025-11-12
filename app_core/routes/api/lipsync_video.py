@@ -14,7 +14,7 @@ from ...services import convert_to_wav, generate_tts
 from ...services.video_lipsync_stream import process_video_lipsync_streaming
 
 # Фиксированное видео-база
-BASE_VIDEO_PATH = '/home/arman/musetalk/avatar/IMG_3899.MOV'
+BASE_VIDEO_PATH = '/home/arman/musetalk/avatar/IMG_38991.MOV'
 
 
 @api_bp.route('/api/lipsync/video', methods=['GET', 'POST'])
@@ -89,7 +89,7 @@ def lipsync_video():
             encoder=encoder,
             crf=crf,
             preset=preset,
-            pads=(0, 10, 0, 0),
+            pads=(0, 50, 0, 0),
             nosmooth=False
         )
         
